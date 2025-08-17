@@ -5,7 +5,7 @@
 	import { Button } from '$lib/components/ui/button/index.js';
 
 	let { data } = $props();
-	let { supabase, claims } = $derived(data);
+	let { claims, session } = $derived(data);
 </script>
 
 <h1 class="mt-4 text-2xl font-bold text-teal-700">Welcome, {claims?.user_metadata.name}!</h1>
@@ -14,3 +14,5 @@
 	<h3 class="text-xl font-semibold text-gray-600">Your Experiences</h3>
 	<Button class="bg-teal-500 text-white">Create Experience</Button>
 </div>
+
+session: {JSON.stringify(session)}

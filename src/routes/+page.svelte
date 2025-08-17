@@ -1,6 +1,16 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { Button } from '$lib/components/ui/button/index.js';
+	let { data } = $props();
+	let { session } = $derived(data);
+
+	function handleDashboardClick() {
+		if (session) {
+			goto('/dashboard');
+		} else {
+			goto('/auth');
+		}
+	}
 </script>
 
 <div
@@ -9,7 +19,7 @@
 	<h1 class="mb-8 text-4xl font-bold text-teal-700 drop-shadow">Welcome to LocatraEx!</h1>
 	<Button
 		class="rounded-2xl bg-teal-600 px-6 py-6 text-lg font-semibold text-white shadow transition hover:cursor-pointer hover:bg-teal-700 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:ring-offset-2 active:bg-teal-800"
-		onclick={() => goto('/dashboard')}
+		onclick={handleDashboardClick}
 	>
 		Dashboard
 	</Button>
