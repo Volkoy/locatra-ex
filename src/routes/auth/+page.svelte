@@ -4,10 +4,7 @@
 
 	async function loginWithGoogle() {
 		await data.supabase.auth.signInWithOAuth({
-			provider: 'google',
-			options: {
-				redirectTo: `${window.location.origin}/auth/callback`
-			}
+			provider: 'google'
 		});
 	}
 </script>
