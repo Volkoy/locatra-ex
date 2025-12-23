@@ -1,5 +1,5 @@
 import type { Session, SupabaseClient, Claims } from '@supabase/supabase-js'
-import type { Database } from './database.types.ts'
+import type { Database } from '$lib/database.types'
 declare global {
 	namespace App {
         interface Platform {
@@ -14,7 +14,8 @@ declare global {
             claims: Claims | null
         }
         interface PageData {
-            session: Session | null
+            session: Session | null;
+            flash?: { type: 'success' | 'error'; message: string };
         }
     }
 }
