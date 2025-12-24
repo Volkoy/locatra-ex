@@ -57,30 +57,22 @@
 
 <Toaster position="bottom-left" closeButton />
 <div class="relative flex min-h-screen flex-col gap-2 bg-gray-50 p-2 md:flex-row">
-	<aside class="z-30 h-fit w-96 gap-2 rounded-lg border border-gray-300 bg-white p-4">
+	<aside class="z-30 h-fit w-2xs gap-2 rounded-lg border border-gray-300 bg-white p-4">
 		<h2 class="text-lg font-bold">Create Game</h2>
 		<p class="mb-2 justify-end text-gray-600">Follow the steps below to create your game.</p>
 		<nav>
 			<p class="mb-2 text-sm text-gray-600">Step {currentStep} of {steps.length}</p>
-			<ul class="relative flex flex-col space-y-8">
+			<ul class="flex flex-col">
 				{#each steps as step, i}
 					<!-- Step -->
-					<li class="relative flex items-center last:mb-0">
-						<!-- Line -->
-						{#if i < steps.length - 1}
-							<span
-								class={`absolute top-16 left-[26px] z-0 h-8 w-1 ${
-									step.step < currentStep ? 'bg-black' : 'bg-gray-300'
-								}`}
-							></span>
-						{/if}
+					<li class="flex items-center">
 						<a
 							href={getStepUrl(step.slug)}
-							class="z-10 flex w-full items-center rounded-lg p-2 transition-colors hover:bg-gray-50 hover:outline hover:outline-gray-400"
+							class="flex w-full items-center gap-4 rounded-lg p-2 transition-colors hover:bg-gray-50 hover:outline hover:outline-gray-400"
 						>
 							<!-- Step Circle -->
 							<span
-								class={`flex h-10 w-10 items-center justify-center rounded-full font-bold ${
+								class={`flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full font-bold ${
 									step.step === currentStep
 										? 'bg-black text-white'
 										: step.step < currentStep
@@ -91,9 +83,9 @@
 								{step.step}
 							</span>
 							<!-- Step Label -->
-							<div class="grid">
+							<div class="min-w-0 flex-1">
 								<span
-									class={`ml-4 text-lg ${
+									class={`block text-lg ${
 										step.step === currentStep
 											? 'font-bold'
 											: step.step < currentStep
@@ -103,12 +95,22 @@
 								>
 									{step.label}
 								</span>
-								<span class="ml-4 text-sm font-medium text-gray-500">
+								<span class="block text-sm font-medium text-gray-500">
 									{step.description}
 								</span>
 							</div>
 						</a>
 					</li>
+					<!-- Line connector -->
+					{#if i < steps.length - 1}
+						<div class="flex px-2">
+							<div class="w-10 flex-shrink-0">
+								<div
+									class={`mx-auto h-8 w-1 ${step.step < currentStep ? 'bg-black' : 'bg-gray-300'}`}
+								></div>
+							</div>
+						</div>
+					{/if}
 				{/each}
 			</ul>
 		</nav>
