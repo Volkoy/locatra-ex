@@ -23,17 +23,22 @@ export const load: PageServerLoad = async ({ params, locals: { supabase, safeGet
 
     // Use RPC function to get location coordinates from PostGIS
     let locationData = null;
-    if (game.id) {
-        const { data: locationResult } = await supabase
-            .rpc('get_game_location', { game_id_param: game.id });
-        
-        if (locationResult && typeof locationResult === 'object') {
-            const coords = locationResult as { longitude: number; latitude: number };
-            locationData = {
-                lng: coords.longitude,
-                lat: coords.latitude,
-                address: ''
-            };
+    if (game.id && game.location) {
+        try {
+            const { data: locationResult, error: locationError } = await supabase
+                .rpc('get_game_location', { game_id_param: game.id });
+            
+            if (!locationError && locationResult && typeof locationResult === 'object') {
+                const coords = locationResult as { longitude: number; latitude: number };
+                locationData = {
+                    lng: coords.longitude,
+                    lat: coords.latitude,
+                    address: ''
+                };
+            }
+        } catch (err) {
+            console.error('Error fetching game location:', err);
+            // locationData remains null
         }
     }
 
@@ -45,8 +50,25 @@ export const load: PageServerLoad = async ({ params, locals: { supabase, safeGet
         .order('created_at', { ascending: true });
 
     // Use RPC function to get POIs with location coordinates from PostGIS
-    const { data: poisWithLocation } = await supabase
-        .rpc('get_game_pois_with_location', { game_id_param: game.id });
+    let poisWithLocation = [];
+    try {
+        const { data: poisData, error: poisError } = await supabase
+            .rpc('get_game_pois_with_location', { game_id_param: game.id });
+        
+        if (!poisError && poisData) {
+            poisWithLocation = poisData;
+        }
+    } catch (err) {
+        console.error('Error fetching POIs with location:', err);
+        // Fall back to regular POI fetch
+        const { data: regularPois } = await supabase
+            .from('pois')
+            .select('*')
+            .eq('game_id', game.id)
+            .order('created_at', { ascending: true });
+        
+        poisWithLocation = regularPois || [];
+    }
 
     // Fetch Cards
     const { data: cards } = await supabase
@@ -66,7 +88,7 @@ export const load: PageServerLoad = async ({ params, locals: { supabase, safeGet
         game,
         locationData,
         characters: characters || [],
-        pois: poisWithLocation || [],
+        pois: poisWithLocation,
         cards: cards || [],
         aiConfig: aiConfig || null
     };

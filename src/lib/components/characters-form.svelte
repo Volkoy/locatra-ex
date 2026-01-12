@@ -10,6 +10,7 @@
 		X
 	} from 'lucide-svelte';
 	import { Input } from '$lib/components/ui/input/index.js';
+	import * as Empty from '$lib/components/ui/empty/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import * as Select from '$lib/components/ui/select/index.js';
 	import * as Form from '$lib/components/ui/form/index.js';
@@ -113,11 +114,17 @@
 				},
 				{
 					label: 'Character images',
-					status: (charsWithoutImages === 0 ? 'complete' : 'warning') as 'complete' | 'warning',
+					status: (characters.length === 0
+						? 'incomplete'
+						: charsWithoutImages === 0
+							? 'complete'
+							: 'warning') as 'complete' | 'incomplete' | 'warning',
 					description:
-						charsWithoutImages > 0
-							? `${charsWithoutImages} missing image${charsWithoutImages > 1 ? 's' : ''}`
-							: 'All characters have images'
+						characters.length === 0
+							? 'No characters yet'
+							: charsWithoutImages > 0
+								? `${charsWithoutImages} missing image${charsWithoutImages > 1 ? 's' : ''}`
+								: 'All characters have images'
 				}
 			];
 		}
@@ -217,7 +224,7 @@
 
 			$formData.image_url = publicUrl;
 			imageTimestamp = Date.now();
-			imagePreview = `${publicUrl}?t=${imageTimestamp}`;
+			// Don't update imagePreview - keep showing the local data URL
 		} catch (error) {
 			console.error('Upload error:', error);
 			alert('Failed to upload image');
@@ -260,133 +267,149 @@
 				<div class="mb-6">
 					<h2 class="text-2xl font-semibold">Characters</h2>
 					<p class="text-gray-600">
-						Create characters that players can embody during the game. Each character offers a
-						unique perspective on the story.
+						Create characters that players can embody during the game. Players can choose from these
+						characters when joining a game and write their story from the character's perspective.
 					</p>
 				</div>
-				<div class="flex gap-4">
-					<Field.Field class="max-w-[320px]">
-						<Field.Label for="search">Search Characters</Field.Label>
-						<Input
-							id="search"
-							type="text"
-							placeholder="Search by name or summary..."
-							bind:value={searchQuery}
-						/>
-					</Field.Field>
-					<Field.Field orientation="responsive" class="max-w-[180px]">
-						<Field.Label for="sort">Sort By</Field.Label>
-						<Select.Root type="single" bind:value={sortBy}>
-							<Select.Trigger id="sort">
-								{sortBy === 'name' ? 'Name' : 'Category'}
-							</Select.Trigger>
-							<Select.Content>
-								<Select.Item value="name">Name</Select.Item>
-								<Select.Item value="category">Category</Select.Item>
-							</Select.Content>
-						</Select.Root>
-					</Field.Field>
-				</div>
 
-				<!-- Character Grid -->
-				<div class="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
-					<!-- Add Character Card -->
-					<button
-						onclick={openCreateForm}
-						class="group flex aspect-[3/4] flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed border-gray-300 p-6 transition-all hover:cursor-pointer hover:border-primary hover:bg-gray-50"
-					>
-						<div
-							class="flex h-16 w-16 items-center justify-center rounded-full bg-gray-100 transition-colors group-hover:bg-primary/10"
-						>
-							<Plus class="h-8 w-8 text-gray-400 transition-colors group-hover:text-primary" />
-						</div>
-						<span class="font-medium text-gray-600 transition-colors group-hover:text-primary"
-							>Add New Character</span
-						>
-					</button>
+				{#if characters.length === 0}
+					<Empty.Root>
+						<Empty.Header>
+							<Empty.Media variant="icon">
+								<UserRound />
+							</Empty.Media>
+							<Empty.Title>No Characters Yet</Empty.Title>
+							<Empty.Description>
+								Create your first character to get started. Characters offer unique perspectives and
+								roles in your game's story.
+							</Empty.Description>
+						</Empty.Header>
+						<Empty.Content>
+							<Button size="lg" onclick={openCreateForm}>
+								<Plus class="mr-2 h-5 w-5" />
+								Create Character
+							</Button>
+						</Empty.Content>
+					</Empty.Root>
+				{:else}
+					<div class="flex gap-4">
+						<Field.Field class="max-w-[320px]">
+							<Field.Label for="search">Search Characters</Field.Label>
+							<Input
+								id="search"
+								type="text"
+								placeholder="Search by name or summary..."
+								bind:value={searchQuery}
+							/>
+						</Field.Field>
+						<Field.Field orientation="responsive" class="max-w-[180px]">
+							<Field.Label for="sort">Sort By</Field.Label>
+							<Select.Root type="single" bind:value={sortBy}>
+								<Select.Trigger id="sort">
+									{sortBy === 'name' ? 'Name' : 'Category'}
+								</Select.Trigger>
+								<Select.Content>
+									<Select.Item value="name">Name</Select.Item>
+									<Select.Item value="category">Category</Select.Item>
+								</Select.Content>
+							</Select.Root>
+						</Field.Field>
+					</div>
 
-					<!-- Character Cards -->
-					{#each filteredCharacters as character (character.id)}
-						<div
-							class="group flex aspect-[3/4] flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm transition-all hover:scale-[1.02] hover:shadow-lg"
+					<!-- Character Grid -->
+					<div class="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3">
+						<!-- Add Character Card -->
+						<button
+							onclick={openCreateForm}
+							class="group flex min-h-[280px] flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed border-gray-300 p-4 transition-all hover:cursor-pointer hover:border-primary hover:bg-gray-50 sm:aspect-[3/4] sm:p-6"
 						>
-							<!-- Character Image -->
 							<div
-								class="relative aspect-video h-1/2 min-h-2/5 overflow-hidden bg-gradient-to-br from-gray-100 to-gray-200"
+								class="flex h-16 w-16 items-center justify-center rounded-full bg-gray-100 transition-colors group-hover:bg-primary/10"
 							>
-								{#if character.image_url}
-									<img
-										src={`${character.image_url}?t=${imageTimestamp}`}
-										alt="{character.name} avatar"
-										class="h-full w-full object-cover transition-transform duration-300 group-hover:scale-110"
-									/>
-								{:else}
-									<div class="flex h-full w-full items-center justify-center">
-										<UserRound class="h-16 w-16 text-gray-300" />
-									</div>
-								{/if}
-								<!-- Category Badge -->
-								<div class="absolute top-3 right-3">
-									<span
-										class="rounded-full bg-white/90 px-3 py-1.5 text-xs font-semibold text-gray-700 shadow-sm backdrop-blur-sm"
-									>
-										{character.category === 'human' ? 'Human' : 'Non-Human'}
-									</span>
-								</div>
+								<Plus class="h-8 w-8 text-gray-400 transition-colors group-hover:text-primary" />
 							</div>
+							<span class="font-medium text-gray-600 transition-colors group-hover:text-primary"
+								>Add New Character</span
+							>
+						</button>
 
-							<!-- Character Content -->
-							<div class="flex flex-1 flex-col p-4">
-								<!-- Character Name -->
-								<h3 class="text-lg leading-tight font-bold text-balance break-words text-gray-900">
-									{character.name}
-								</h3>
-
-								<!-- Character Summary -->
-								<p
-									class="line-clamp-3 flex-1 overflow-scroll py-2 text-sm leading-relaxed break-words text-gray-600"
+						<!-- Character Cards -->
+						{#each filteredCharacters as character (character.id)}
+							<div
+								class="group flex min-h-[280px] flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm transition-all hover:shadow-lg sm:aspect-[3/4]"
+							>
+								<!-- Character Image -->
+								<div
+									class="relative h-32 overflow-hidden bg-gradient-to-br from-gray-100 to-gray-200 sm:aspect-video sm:h-1/2 sm:min-h-2/5"
 								>
-									{character.summary}
-								</p>
+									{#if character.image_url}
+										<img
+											src={character.image_url}
+											alt="{character.name} avatar"
+											class="h-full w-full object-cover"
+										/>
+									{:else}
+										<div class="flex h-full w-full items-center justify-center">
+											<UserRound class="h-16 w-16 text-gray-300" />
+										</div>
+									{/if}
+									<!-- Category Badge -->
+									<div class="absolute top-3 right-3">
+										<span
+											class="rounded-full bg-white/90 px-3 py-1.5 text-xs font-semibold text-gray-700 shadow-sm backdrop-blur-sm"
+										>
+											{character.category === 'human' ? 'Human' : 'Non-Human'}
+										</span>
+									</div>
+								</div>
 
-								<!-- Action Buttons -->
-								<div class="mt-4 flex gap-2">
-									<Button
-										variant="outline"
-										size="sm"
-										class="flex-1 text-red-600 hover:border-red-300 hover:bg-red-50 hover:text-red-700"
-										onclick={() => deleteCharacter(character.id)}
+								<!-- Character Content -->
+								<div class="flex flex-1 flex-col p-3 sm:p-4">
+									<!-- Character Name -->
+									<h3
+										class="text-base leading-tight font-bold text-balance break-words text-gray-900 sm:text-lg"
 									>
-										<Trash2 class="h-3.5 w-3.5" />
-									</Button>
-									<Button
-										variant="default"
-										size="sm"
-										class="flex-[2]"
-										onclick={() => openEditForm(character)}
+										{character.name}
+									</h3>
+
+									<!-- Character Summary -->
+									<p
+										class="line-clamp-3 flex-1 py-2 text-xs leading-relaxed break-words text-gray-600 sm:text-sm"
 									>
-										<SquarePen class="mr-1.5 h-3.5 w-3.5" />
-										Edit
-									</Button>
+										{character.summary}
+									</p>
+
+									<!-- Action Buttons -->
+									<div class="mt-3 flex gap-2 sm:mt-4">
+										<Button
+											variant="outline"
+											size="sm"
+											class="min-h-[40px] flex-1 text-red-600 hover:border-red-300 hover:bg-red-50 hover:text-red-700"
+											onclick={() => deleteCharacter(character.id)}
+										>
+											<Trash2 class="h-4 w-4" />
+										</Button>
+										<Button
+											variant="default"
+											size="sm"
+											class="min-h-[40px] flex-[2]"
+											onclick={() => openEditForm(character)}
+										>
+											<SquarePen class="mr-1.5 h-4 w-4" />
+											<span class="text-sm">Edit</span>
+										</Button>
+									</div>
 								</div>
 							</div>
+						{/each}
+					</div>
+
+					<!-- Empty Search State -->
+					{#if filteredCharacters.length === 0}
+						<div class="py-12 text-center">
+							<p class="text-gray-500">No characters found matching "{searchQuery}"</p>
 						</div>
-					{/each}
-				</div>
-
-				<!-- Empty State -->
-				{#if filteredCharacters.length === 0 && characters.length > 0}
-					<div class="py-12 text-center">
-						<p class="text-gray-500">No characters found matching "{searchQuery}"</p>
-					</div>
-				{/if}
-
-				{#if filteredCharacters.length === 0 && characters.length === 0}
-					<div class="py-12 text-center">
-						<p class="text-gray-500">
-							No characters yet. Create your first character to get started!
-						</p>
-					</div>
+					{/if}
 				{/if}
 
 				<div class="mt-8 flex w-full justify-end gap-4">

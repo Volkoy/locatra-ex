@@ -4,7 +4,7 @@ VALUES (
     'game-images',
     'game-images',
     true,
-    5242880, -- 5MB limit
+    10485760, -- 10MB limit
     ARRAY['image/jpeg', 'image/png', 'image/webp', 'image/gif']
 )
 ON CONFLICT (id) DO NOTHING;

@@ -56,7 +56,7 @@
 </script>
 
 <Toaster position="bottom-left" closeButton />
-<div class="relative flex min-h-screen flex-col gap-2 bg-gray-50 p-2 md:flex-row">
+<div class="relative flex min-h-[calc(100vh-6rem)] flex-col gap-2 bg-gray-50 p-2 md:flex-row">
 	<aside class="z-30 h-fit w-2xs gap-2 rounded-lg border border-gray-300 bg-white p-4">
 		<h2 class="text-lg font-bold">Create Game</h2>
 		<p class="mb-2 justify-end text-gray-600">Follow the steps below to create your game.</p>

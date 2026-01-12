@@ -417,7 +417,7 @@
 	}
 </script>
 
-<div class="mx-auto w-full flex-1">
+<div class="mx-auto mb-2 w-full flex-1">
 	<div class="grid grid-cols-1 gap-2 lg:grid-cols-3">
 		<!-- Main Form -->
 		<div class="lg:col-span-2">

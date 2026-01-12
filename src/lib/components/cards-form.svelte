@@ -25,6 +25,7 @@
 	import * as Tabs from '$lib/components/ui/tabs/index.js';
 	import { Checkbox } from '$lib/components/ui/checkbox/index.js';
 	import { Textarea } from '$lib/components/ui/textarea/index.js';
+	import * as Empty from '$lib/components/ui/empty/index.js';
 	import ValidationChecklist from './validation-checklist.svelte';
 	import { superForm } from 'sveltekit-superforms';
 	import { cardSchema } from '$lib/zod/schema';
@@ -198,13 +199,17 @@
 				},
 				{
 					label: 'POI card coverage',
-					status: (pois.length > 0 && poisWithoutCards <= pois.length * 0.5
-						? 'complete'
-						: 'warning') as 'complete' | 'warning',
+					status: (cards.length === 0
+						? 'incomplete'
+						: pois.length > 0 && poisWithoutCards <= pois.length * 0.5
+							? 'complete'
+							: 'warning') as 'complete' | 'warning' | 'incomplete',
 					description:
-						poisWithoutCards > 0
-							? `${poisWithoutCards} POI${poisWithoutCards > 1 ? 's' : ''} without cards`
-							: 'All POIs have cards'
+						cards.length === 0
+							? 'No cards created yet'
+							: poisWithoutCards > 0
+								? `${poisWithoutCards} POI${poisWithoutCards > 1 ? 's' : ''} without cards`
+								: 'All POIs have cards'
 				}
 			];
 		}
@@ -265,7 +270,9 @@
 					characterType: $formData.character_category,
 					cardCategory: $formData.card_category,
 					keywords: $formData.keywords,
-					poiId: $formData.poi_id
+					poiId: $formData.poi_id,
+					existingTitle: $formData.title || null,
+					existingPrompt: $formData.prompt || null
 				})
 			});
 
@@ -356,152 +363,170 @@
 			<div class="space-y-6 rounded-lg border border-gray-300 bg-white p-6">
 				<div class="mb-6">
 					<h2 class="text-2xl font-semibold">Card Prompts</h2>
-					<p class="text-gray-600">Create card prompts that guide players through their journey.</p>
-				</div>
-				<div class="flex gap-4">
-					<Field.Field class="max-w-[320px]">
-						<Field.Label for="search">Search Cards</Field.Label>
-						<Input
-							id="search"
-							type="text"
-							placeholder="Search by name or summary..."
-							bind:value={searchQuery}
-						/>
-					</Field.Field>
-					<Field.Field orientation="responsive" class="max-w-[180px]">
-						<Field.Label for="sort">Sort By</Field.Label>
-						<Select.Root type="single" bind:value={sortBy}>
-							<Select.Trigger id="sort">
-								{sortBy === 'title' ? 'Title' : sortBy === 'type' ? 'Type' : 'Journey Step'}
-							</Select.Trigger>
-							<Select.Content>
-								<Select.Item value="title">Title</Select.Item>
-								<Select.Item value="type">Type</Select.Item>
-								<Select.Item value="hero_steps">Journey Step</Select.Item>
-							</Select.Content>
-						</Select.Root>
-					</Field.Field>
-				</div>
-
-				<!-- Cards Grid -->
-				<div class="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
-					<button
-						onclick={openCreateForm}
-						class="group flex aspect-[3/4] flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed border-gray-300 p-6 transition-colors hover:cursor-pointer hover:border-primary hover:bg-gray-50"
-					>
-						<div
-							class="flex h-16 w-16 items-center justify-center rounded-full bg-gray-100 transition-colors group-hover:bg-primary/10"
-						>
-							<Plus class="h-8 w-8 text-gray-400 transition-colors group-hover:text-primary" />
-						</div>
-						<span class="font-medium text-gray-600 transition-colors group-hover:text-primary"
-							>Create New Card</span
-						>
-					</button>
-
-					{#each filteredCards as card (card.id)}
-						{@const Icon = getCardIcon(card.type)}
-						<div
-							class="relative flex aspect-[3/4] flex-col overflow-hidden rounded-xl border border-gray-200 bg-gradient-to-br {getCardGradient(
-								card.type
-							)}"
-						>
-							<!-- Background Icon -->
-							<div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 opacity-5">
-								<Icon class="h-32 w-32" strokeWidth={1.5} />
-							</div>
-
-							<!-- Card Content -->
-							<div class="relative z-10 flex flex-1 flex-col p-4">
-								<!-- Badges -->
-								<div class="mb-3 flex flex-wrap gap-2">
-									<span
-										class="rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 capitalize"
-									>
-										{card.type}
-									</span>
-									<span
-										class="rounded-full bg-purple-100 px-3 py-1.5 text-xs font-semibold text-purple-700"
-									>
-										{characterTypes.find((t) => t.value === card.character_category)?.label ||
-											card.character_category}
-									</span>
-									{#if card.card_category === 'poi_specific'}
-										<span
-											class="flex items-center gap-1 rounded-full bg-green-100 px-3 py-1.5 text-xs font-semibold text-green-700"
-										>
-											<MapPin class="h-3 w-3" />
-											POI
-										</span>
-									{:else}
-										<span
-											class="flex items-center gap-1 rounded-full bg-amber-100 px-3 py-1.5 text-xs font-semibold text-amber-700"
-										>
-											<Globe class="h-3 w-3" />General
-										</span>
-									{/if}
-								</div>
-
-								<!-- Card Title -->
-								<h3 class="mb-3 line-clamp-2 text-lg leading-tight font-bold text-gray-900">
-									{card.title}
-								</h3>
-
-								<!-- Card Prompt -->
-								<p
-									class="line-clamp-3 flex-1 overflow-scroll text-sm leading-relaxed text-gray-600"
-								>
-									{card.prompt}
-								</p>
-
-								<!-- Journey Steps -->
-								<div class="mb-4 flex flex-wrap gap-1">
-									{#each card.hero_steps.slice(0, 2) as step}
-										<span
-											class="rounded-full bg-indigo-100 px-2 py-1 text-xs font-medium text-indigo-700"
-										>
-											{getJourneyStepLabel(step)}
-										</span>
-									{/each}
-									{#if card.hero_steps.length > 2}
-										<span
-											class="rounded-full bg-indigo-100 px-2 py-1 text-xs font-medium text-indigo-700"
-										>
-											+{card.hero_steps.length - 2}
-										</span>
-									{/if}
-								</div>
-
-								<!-- Action Buttons -->
-								<div class="flex gap-2">
-									<Button
-										variant="outline"
-										size="sm"
-										class="flex-1 text-red-600 hover:border-red-300 hover:bg-red-50 hover:text-red-700"
-										onclick={() => deleteCard(card.id)}
-									>
-										<Trash2 class="h-3.5 w-3.5" />
-									</Button>
-									<Button
-										variant="default"
-										size="sm"
-										class="flex-[2]"
-										onclick={() => openEditForm(card)}
-									>
-										<SquarePen class="mr-1.5 h-3.5 w-3.5" />
-										Edit
-									</Button>
-								</div>
-							</div>
-						</div>
-					{/each}
+					<p class="text-gray-600">
+						Cards guide your players' stories by presenting challenges, reflections, and prompts
+						that help them write meaningful story segments. Each card shapes their journey and
+						inspires the narrative fragments they create.
+					</p>
 				</div>
 
 				{#if cards.length === 0}
-					<div class="flex flex-col items-center gap-4 py-12 text-center">
-						<p class="text-gray-500">
-							No cards created yet. Click "Create New Card" to get started.
-						</p>
+					<Empty.Root>
+						<Empty.Header>
+							<Empty.Media variant="icon">
+								<BookDashed />
+							</Empty.Media>
+							<Empty.Title>No Cards Yet</Empty.Title>
+							<Empty.Description>
+								Create your first card prompt to guide players through their journey.
+							</Empty.Description>
+						</Empty.Header>
+						<Empty.Content>
+							<Button onclick={openCreateForm}>
+								<Plus class="mr-2 h-4 w-4" />
+								Create Card
+							</Button>
+						</Empty.Content>
+					</Empty.Root>
+				{:else}
+					<div class="flex gap-4">
+						<Field.Field class="max-w-[320px]">
+							<Field.Label for="search">Search Cards</Field.Label>
+							<Input
+								id="search"
+								type="text"
+								placeholder="Search by name or summary..."
+								bind:value={searchQuery}
+							/>
+						</Field.Field>
+						<Field.Field orientation="responsive" class="max-w-[180px]">
+							<Field.Label for="sort">Sort By</Field.Label>
+							<Select.Root type="single" bind:value={sortBy}>
+								<Select.Trigger id="sort">
+									{sortBy === 'title' ? 'Title' : sortBy === 'type' ? 'Type' : 'Journey Step'}
+								</Select.Trigger>
+								<Select.Content>
+									<Select.Item value="title">Title</Select.Item>
+									<Select.Item value="type">Type</Select.Item>
+									<Select.Item value="hero_steps">Journey Step</Select.Item>
+								</Select.Content>
+							</Select.Root>
+						</Field.Field>
+					</div>
+
+					<!-- Cards Grid -->
+					<div class="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3">
+						<button
+							onclick={openCreateForm}
+							class="group flex min-h-[280px] flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed border-gray-300 p-6 transition-colors hover:cursor-pointer hover:border-primary hover:bg-gray-50 sm:aspect-[3/4]"
+						>
+							<div
+								class="flex h-16 w-16 items-center justify-center rounded-full bg-gray-100 transition-colors group-hover:bg-primary/10"
+							>
+								<Plus class="h-8 w-8 text-gray-400 transition-colors group-hover:text-primary" />
+							</div>
+							<span
+								class="text-base font-medium text-gray-600 transition-colors group-hover:text-primary sm:text-lg"
+								>Create New Card</span
+							>
+						</button>
+
+						{#each filteredCards as card (card.id)}
+							{@const Icon = getCardIcon(card.type)}
+							<div
+								class="relative flex min-h-[280px] flex-col overflow-hidden rounded-xl border border-gray-200 bg-gradient-to-br sm:aspect-[3/4] {getCardGradient(
+									card.type
+								)}"
+							>
+								<!-- Background Icon -->
+								<div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 opacity-5">
+									<Icon class="h-32 w-32" strokeWidth={1.5} />
+								</div>
+
+								<!-- Card Content -->
+								<div class="relative z-10 flex flex-1 flex-col p-3 sm:p-4">
+									<!-- Badges -->
+									<div class="mb-3 flex flex-wrap gap-1.5 sm:gap-2">
+										<span
+											class="rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-gray-700 capitalize sm:px-3 sm:py-1.5"
+										>
+											{card.type}
+										</span>
+										<span
+											class="rounded-full bg-purple-100 px-2.5 py-1 text-xs font-semibold text-purple-700 sm:px-3 sm:py-1.5"
+										>
+											{characterTypes.find((t) => t.value === card.character_category)?.label ||
+												card.character_category}
+										</span>
+										{#if card.card_category === 'poi_specific'}
+											<span
+												class="flex items-center gap-1 rounded-full bg-green-100 px-2.5 py-1 text-xs font-semibold text-green-700 sm:px-3 sm:py-1.5"
+											>
+												<MapPin class="h-3 w-3" />
+												POI
+											</span>
+										{:else}
+											<span
+												class="flex items-center gap-1 rounded-full bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-700 sm:px-3 sm:py-1.5"
+											>
+												<Globe class="h-3 w-3" />General
+											</span>
+										{/if}
+									</div>
+
+									<!-- Card Title -->
+									<h3
+										class="mb-2 line-clamp-2 text-base leading-tight font-bold text-gray-900 sm:mb-3 sm:text-lg"
+									>
+										{card.title}
+									</h3>
+
+									<!-- Card Prompt -->
+									<p class="line-clamp-3 flex-1 text-xs leading-relaxed text-gray-600 sm:text-sm">
+										{card.prompt}
+									</p>
+
+									<!-- Journey Steps -->
+									<div class="mb-3 flex flex-wrap gap-1 sm:mb-4">
+										{#each card.hero_steps.slice(0, 2) as step}
+											<span
+												class="rounded-full bg-indigo-100 px-2 py-1 text-xs font-medium text-indigo-700"
+											>
+												{getJourneyStepLabel(step)}
+											</span>
+										{/each}
+										{#if card.hero_steps.length > 2}
+											<span
+												class="rounded-full bg-indigo-100 px-2 py-1 text-xs font-medium text-indigo-700"
+											>
+												+{card.hero_steps.length - 2}
+											</span>
+										{/if}
+									</div>
+
+									<!-- Action Buttons -->
+									<div class="flex gap-2">
+										<Button
+											variant="outline"
+											size="sm"
+											class="min-h-[40px] flex-1 text-red-600 hover:border-red-300 hover:bg-red-50 hover:text-red-700"
+											onclick={() => deleteCard(card.id)}
+										>
+											<Trash2 class="h-4 w-4" />
+										</Button>
+										<Button
+											variant="default"
+											size="sm"
+											class="min-h-[40px] flex-[2]"
+											onclick={() => openEditForm(card)}
+										>
+											<SquarePen class="mr-1.5 h-4 w-4" />
+											Edit
+										</Button>
+									</div>
+								</div>
+							</div>
+						{/each}
 					</div>
 				{/if}
 
@@ -524,7 +549,7 @@
 </div>
 
 <Sheet.Root bind:open={isFormOpen}>
-	<Sheet.Content side="right" class="w-full overflow-y-auto sm:max-w-lg">
+	<Sheet.Content side="right" class="w-full overflow-y-auto pb-4 sm:max-w-lg">
 		<Sheet.Header>
 			<Sheet.Title>{editingCard ? 'Edit Card' : 'Create New Card'}</Sheet.Title>
 			<Sheet.Description>
@@ -540,85 +565,10 @@
 			use:enhance
 			class="space-y-6 px-4"
 		>
-			<Form.Field {form} name="type">
-				<Form.Control>
-					{#snippet children({ props })}
-						<Form.Label>Card Type</Form.Label>
-						<Select.Root type="single" bind:value={$formData.type}>
-							<Select.Trigger {...props} class="w-full">
-								{$formData.type
-									? types.find((t) => t.value === $formData.type)?.label
-									: 'Select card type'}
-							</Select.Trigger>
-							<Select.Content>
-								{#each types as type (type.value)}
-									<Select.Item value={type.value}>{type.label}</Select.Item>
-								{/each}
-							</Select.Content>
-						</Select.Root>
-					{/snippet}
-				</Form.Control>
-				<Form.FieldErrors />
-			</Form.Field>
-
-			<Form.Field {form} name="character_category">
-				<Form.Control>
-					{#snippet children({ props })}
-						<Form.Label>Character Type</Form.Label>
-						<Select.Root type="single" bind:value={$formData.character_category}>
-							<Select.Trigger {...props} class="w-full">
-								{$formData.character_category
-									? characterTypes.find((t) => t.value === $formData.character_category)?.label
-									: 'Select character type'}
-							</Select.Trigger>
-							<Select.Content>
-								{#each characterTypes as type}
-									<Select.Item value={type.value}>{type.label}</Select.Item>
-								{/each}
-							</Select.Content>
-						</Select.Root>
-						<input hidden bind:value={$formData.character_category} />
-					{/snippet}
-				</Form.Control>
-				<Form.FieldErrors />
-			</Form.Field>
-
-			<Form.Fieldset {form} name="hero_steps">
-				<Form.Legend>Hero's Journey Steps</Form.Legend>
-				<Form.Description>Select one or more journey steps</Form.Description>
-				<div class="space-y-3 rounded-lg border border-gray-200 bg-gray-50 p-4">
-					{#each allJourneySteps as step (step.value)}
-						{@const checked = $formData.hero_steps?.includes(step.value)}
-						<div class="flex items-center space-x-2">
-							<Form.Control>
-								{#snippet children({ props })}
-									<Checkbox
-										{...props}
-										value={step.value}
-										{checked}
-										onCheckedChange={(v) => {
-											if (v) {
-												addStep(step.value);
-											} else {
-												removeStep(step.value);
-											}
-										}}
-									/>
-									<Form.Label for={`step-${step.value}`} class="cursor-pointer text-sm font-medium">
-										{step.label}
-									</Form.Label>
-								{/snippet}
-							</Form.Control>
-						</div>
-					{/each}
-					<Form.FieldErrors />
-				</div>
-			</Form.Fieldset>
-
-			<!-- Tabs for General vs POI-Specific Cards -->
+			<!-- Card Category First -->
 			<Form.Fieldset {form} name="card_category">
-				<div class="space-y-4">
-					<Form.Legend>Card Category</Form.Legend>
+				<div class="space-y-4 rounded-lg border border-gray-200 bg-gray-50 p-4">
+					<Form.Legend class="font-semibold text-gray-900">Card Category</Form.Legend>
 					<Tabs.Root bind:value={$formData.card_category}>
 						<Tabs.List class="grid w-full grid-cols-2">
 							<Tabs.Trigger value="general">General Card</Tabs.Trigger>
@@ -631,7 +581,9 @@
 									{#snippet children({ props })}
 										<Form.Label>Keywords</Form.Label>
 										<Form.Description>
-											Enter keywords separated by commas (e.g., nature, reflection, growth)
+											Keywords that define this card's theme and context. The AI will use these to
+											generate relevant prompts that can work across multiple locations in your
+											game.
 										</Form.Description>
 										<Input
 											{...props}
@@ -650,7 +602,8 @@
 									{#snippet children({ props })}
 										<Form.Label>Select POI</Form.Label>
 										<Form.Description>
-											Choose which POI this card is specifically for
+											This card will only appear at the selected location. The AI will use the POI's
+											description, context, and tags to generate location-specific prompts.
 										</Form.Description>
 										<Select.Root type="single" bind:value={$formData.poi_id}>
 											<Select.Trigger {...props} class="w-full">
@@ -679,78 +632,155 @@
 				</div>
 			</Form.Fieldset>
 
-			<div class="rounded-lg border border-blue-200 bg-blue-50 p-4">
-				<div class="mb-2 flex items-center gap-2">
-					<Sparkles class="h-5 w-5 text-blue-600" />
-					<span class="font-semibold text-blue-900">AI Assistant</span>
-				</div>
-				<p class="mb-3 text-sm text-blue-700">
-					Let AI generate a title and prompt based on the selected settings.
-				</p>
-				<Button
-					type="button"
-					variant="outline"
-					onclick={generateAIContent}
-					disabled={isGeneratingAI}
-					class="w-full border-blue-300 bg-white hover:bg-blue-50"
-				>
-					{#if isGeneratingAI}
-						<span class="flex items-center gap-2">
-							<svg class="h-4 w-4 animate-spin" viewBox="0 0 24 24">
-								<circle
-									class="opacity-25"
-									cx="12"
-									cy="12"
-									r="10"
-									stroke="currentColor"
-									stroke-width="4"
-									fill="none"
-								/>
-								<path
-									class="opacity-75"
-									fill="currentColor"
-									d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-								/>
-							</svg>
-							Generating...
-						</span>
-					{:else}
-						<span class="flex items-center gap-2">
-							<Sparkles class="h-4 w-4" />
-							Generate with AI
-						</span>
-					{/if}
-				</Button>
+			<!-- Card Settings Group -->
+			<div class="space-y-6 rounded-lg border border-gray-200 bg-gray-50 p-4">
+				<h3 class="font-semibold text-gray-900">Card Settings</h3>
+
+				<Form.Field {form} name="type">
+					<Form.Control>
+						{#snippet children({ props })}
+							<Form.Label>Card Type</Form.Label>
+							<Form.Description>
+								This defines the card's focus and how it engages players. Choose the type that best
+								fits the card's purpose.
+							</Form.Description>
+							<Select.Root type="single" bind:value={$formData.type}>
+								<Select.Trigger {...props} class="w-full">
+									{$formData.type
+										? types.find((t) => t.value === $formData.type)?.label
+										: 'Select card type'}
+								</Select.Trigger>
+								<Select.Content>
+									{#each types as type (type.value)}
+										<Select.Item value={type.value}>{type.label}</Select.Item>
+									{/each}
+								</Select.Content>
+							</Select.Root>
+						{/snippet}
+					</Form.Control>
+					<Form.FieldErrors />
+				</Form.Field>
+
+				<Form.Field {form} name="character_category">
+					<Form.Control>
+						{#snippet children({ props })}
+							<Form.Label>Character Type</Form.Label>
+							<Form.Description>
+								Specify which character perspectives this card applies to in the story.
+							</Form.Description>
+							<Select.Root type="single" bind:value={$formData.character_category}>
+								<Select.Trigger {...props} class="w-full">
+									{$formData.character_category
+										? characterTypes.find((t) => t.value === $formData.character_category)?.label
+										: 'Select character type'}
+								</Select.Trigger>
+								<Select.Content>
+									{#each characterTypes as type}
+										<Select.Item value={type.value}>{type.label}</Select.Item>
+									{/each}
+								</Select.Content>
+							</Select.Root>
+							<input hidden bind:value={$formData.character_category} />
+						{/snippet}
+					</Form.Control>
+					<Form.FieldErrors />
+				</Form.Field>
+
+				<Form.Fieldset {form} name="hero_steps">
+					<Form.Legend>Hero's Journey Steps</Form.Legend>
+					<Form.Description
+						>Choose which stages of the player's narrative arc this card should appear in. Selecting
+						multiple steps makes the card appear across different moments in their journey.</Form.Description
+					>
+					<div class="space-y-3 rounded-lg border border-gray-200 bg-white p-4">
+						{#each allJourneySteps as step (step.value)}
+							{@const checked = $formData.hero_steps?.includes(step.value)}
+							<div class="flex items-center space-x-2">
+								<Form.Control>
+									{#snippet children({ props })}
+										<Checkbox
+											{...props}
+											value={step.value}
+											{checked}
+											onCheckedChange={(v) => {
+												if (v) {
+													addStep(step.value);
+												} else {
+													removeStep(step.value);
+												}
+											}}
+										/>
+										<Form.Label
+											for={`step-${step.value}`}
+											class="cursor-pointer text-sm font-medium"
+										>
+											{step.label}
+										</Form.Label>
+									{/snippet}
+								</Form.Control>
+							</div>
+						{/each}
+						<Form.FieldErrors />
+					</div>
+				</Form.Fieldset>
 			</div>
 
-			<Form.Field {form} name="title">
-				<Form.Control>
-					{#snippet children({ props })}
-						<Form.Label>Card Title</Form.Label>
-						<Input
-							{...props}
-							bind:value={$formData.title}
-							placeholder="e.g., A Moment of Reflection"
-						/>
-					{/snippet}
-				</Form.Control>
-				<Form.FieldErrors />
-			</Form.Field>
+			<!-- Title and Prompt Group -->
+			<div class="space-y-6 rounded-lg border border-gray-200 bg-gray-50 p-4">
+				<div class="flex items-center justify-between">
+					<h3 class="font-semibold text-gray-900">Card Content</h3>
+					<Button
+						type="button"
+						variant="outline"
+						size="sm"
+						onclick={generateAIContent}
+						disabled={isGeneratingAI}
+						class="border-blue-300 bg-white hover:bg-blue-50"
+					>
+						{#if isGeneratingAI}
+							<Spinner class="mr-1.5 h-3.5 w-3.5 text-blue-600" />
+						{:else}
+							<Sparkles class="mr-1.5 h-3.5 w-3.5 text-blue-600" />
+						{/if}
+						{#if isGeneratingAI}
+							<span class="text-xs">Generating...</span>
+						{:else}
+							<span class="text-xs"
+								>{$formData.title || $formData.prompt ? 'Refine with AI' : 'Generate with AI'}</span
+							>
+						{/if}
+					</Button>
+				</div>
 
-			<Form.Field {form} name="prompt">
-				<Form.Control>
-					{#snippet children({ props })}
-						<Form.Label>Card Prompt</Form.Label>
-						<Textarea
-							{...props}
-							bind:value={$formData.prompt}
-							rows={6}
-							placeholder="Describe what the player should think about, do, or discover..."
-						/>
-					{/snippet}
-				</Form.Control>
-				<Form.FieldErrors />
-			</Form.Field>
+				<Form.Field {form} name="title">
+					<Form.Control>
+						{#snippet children({ props })}
+							<Form.Label>Card Title</Form.Label>
+							<Input
+								{...props}
+								bind:value={$formData.title}
+								placeholder="e.g., A Moment of Reflection"
+							/>
+						{/snippet}
+					</Form.Control>
+					<Form.FieldErrors />
+				</Form.Field>
+
+				<Form.Field {form} name="prompt">
+					<Form.Control>
+						{#snippet children({ props })}
+							<Form.Label>Card Prompt</Form.Label>
+							<Textarea
+								{...props}
+								bind:value={$formData.prompt}
+								rows={6}
+								placeholder="Describe what the player should think about, do, or discover..."
+							/>
+						{/snippet}
+					</Form.Control>
+					<Form.FieldErrors />
+				</Form.Field>
+			</div>
 
 			<Sheet.Footer class="flex flex-row justify-end gap-2">
 				<Button type="button" variant="outline" onclick={() => (isFormOpen = false)}>Cancel</Button>

@@ -23,7 +23,9 @@ export const POST: RequestHandler = async ({ request, locals: { safeGetSession, 
     }
 
     try {
-        const { type, journeySteps, characterType, cardCategory, keywords, poiId } = await request.json();
+        console.log('Generating AI content...');
+        console.log('Request body:', await request.clone().text());
+        const { type, journeySteps, characterType, cardCategory, keywords, poiId, existingTitle, existingPrompt } = await request.json();
 
         const journeyStepDetails = journeySteps.map((step: string) => {
             const name = step.replace(/_/g, ' ').replace(/\b\w/g, (l: string) => l.toUpperCase());
@@ -69,6 +71,22 @@ export const POST: RequestHandler = async ({ request, locals: { safeGetSession, 
                     Please incorporate these keywords into the card prompt to guide the player's experience.`;
         }
 
+        let existingContentInfo = '';
+        if (existingTitle || existingPrompt) {
+            existingContentInfo = `\n\nEXISTING CONTENT TO REFINE:`;
+            if (existingTitle) {
+                existingContentInfo += `\n- Current Title: "${existingTitle}"`;
+            }
+            if (existingPrompt) {
+                existingContentInfo += `\n- Current Prompt: "${existingPrompt}"`;
+            }
+            existingContentInfo += `\n\nIMPORTANT: The user has provided existing content. Your task is to REFINE and IMPROVE this content while maintaining its core theme and message. Do not create entirely new content from scratch. Instead:
+- Preserve the main idea and theme of the existing title/prompt
+- Enhance clarity, engagement, and narrative quality
+- Ensure it aligns with the selected card type, character type, and journey steps
+- Keep the essence of what the user wrote while making it more polished and effective`;
+        }
+
         const prompt = `Generate a card prompt for a location-based storytelling game.     
                         Card Type: ${type}
                         
@@ -76,7 +94,7 @@ export const POST: RequestHandler = async ({ request, locals: { safeGetSession, 
                         ${journeyStepDetails}
                         
                         Character perspective: ${characterTypeText}
-                        ${contextInfo}
+                        ${contextInfo}${existingContentInfo}
 
                         STRICT REQUIREMENTS:
                         1. Title: Maximum 25 characters (including spaces and punctuation)
@@ -100,6 +118,9 @@ Your expertise includes:
 - Crafting engaging, concise content that encourages player immersion and interaction with their physical surroundings
 - Adapting tone and content based on character types (human, non-human, or both)
 - Incorporating location-specific context or general keywords effectively
+- Refining and improving existing content while preserving the creator's original vision and intent
+
+When existing content is provided, your primary goal is to enhance and refine it, NOT to replace it entirely. Stay true to the user's creative direction while improving clarity, engagement, and alignment with game mechanics.
 
 When multiple Hero's Journey steps are selected, you should create prompts that could fall into any of those stages naturally, finding common themes that make sense across the selected steps. Always prioritize clarity, engagement, and adherence to character limits while maintaining narrative coherence.`;
 

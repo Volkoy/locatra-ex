@@ -8,7 +8,13 @@
 	import { Textarea } from '$lib/components/ui/textarea/index.js';
 	import { Button } from '$lib/components/ui/button';
 	import ValidationChecklist from './validation-checklist.svelte';
-	import { MapLibre, Marker, MapEvents } from 'svelte-maplibre';
+	import {
+		MapLibre,
+		Marker,
+		MapEvents,
+		NavigationControl,
+		GeolocateControl
+	} from 'svelte-maplibre';
 	import type { Map, MapMouseEvent, LngLat } from 'maplibre-gl';
 	import { Upload, X, MapPin, Trash2, SquarePen, ArrowLeft, ArrowRight } from 'lucide-svelte';
 	import { superForm } from 'sveltekit-superforms';
@@ -54,6 +60,13 @@
 	let tempMarkerPosition = $state<{ lng: number; lat: number } | null>(null);
 	let hasInitialized = $state(false);
 
+	// Clear temporary marker when form closes
+	$effect(() => {
+		if (!isFormOpen) {
+			tempMarkerPosition = null;
+		}
+	});
+
 	const MIN_POIS = 6;
 
 	const validationChecks = $derived.by(
@@ -84,11 +97,17 @@
 				},
 				{
 					label: 'POI images',
-					status: (poisWithoutImages === 0 ? 'complete' : 'warning') as 'complete' | 'warning',
+					status: (pois.length === 0
+						? 'incomplete'
+						: poisWithoutImages === 0
+							? 'complete'
+							: 'warning') as 'complete' | 'incomplete' | 'warning',
 					description:
-						poisWithoutImages > 0
-							? `${poisWithoutImages} missing image${poisWithoutImages > 1 ? 's' : ''}`
-							: 'All POIs have images'
+						pois.length === 0
+							? 'No POIs yet'
+							: poisWithoutImages > 0
+								? `${poisWithoutImages} missing image${poisWithoutImages > 1 ? 's' : ''}`
+								: 'All POIs have images'
 				}
 			];
 		}
@@ -128,6 +147,18 @@
 		const { lng, lat } = e.lngLat;
 		console.log('Map clicked at:', lng, lat);
 		tempMarkerPosition = { lng, lat };
+
+		// Fly to the clicked location with animation
+		if (map) {
+			const currentZoom = map.getZoom();
+			const targetZoom = currentZoom < 16 ? 16 : currentZoom;
+
+			map.flyTo({
+				center: [lng, lat],
+				zoom: targetZoom,
+				duration: 1000
+			});
+		}
 
 		editingPOI = null;
 		imagePreview = null;
@@ -276,198 +307,203 @@
 	}
 </script>
 
-<!-- Map -->
-<div class="absolute inset-0 z-0">
-	<MapLibre
-		style="https://basemaps.cartocdn.com/gl/positron-gl-style/style.json"
-		class="h-full w-full"
-		bind:map
-		zoom={14}
-		onclick={handleMapClick}
-	>
-		{#each pois as poi (poi.id)}
-			<Marker lngLat={[poi.longitude, poi.latitude]}>
-				<HoverCard.Root openDelay={200}>
-					<HoverCard.Trigger>
-						<Button
-							onclick={() => openEditForm(poi)}
-							class="flex size-10 items-center justify-center rounded-full bg-blue-600 p-2 text-white"
-						>
-							<MapPin class="size-6" stroke-width={2} />
-						</Button>
-					</HoverCard.Trigger>
-					<HoverCard.Content class="w-80 overflow-hidden p-0">
-						<div class="flex flex-col">
-							<!-- POI Image -->
-							<div
-								class="relative h-32 overflow-hidden bg-gradient-to-br from-gray-100 to-gray-200"
+<div class="flex h-full w-full gap-2 overflow-hidden">
+	<!-- Map -->
+	<div class="flex-1 rounded-lg border border-gray-300">
+		<MapLibre
+			style="https://basemaps.cartocdn.com/gl/positron-gl-style/style.json"
+			class="h-full w-full"
+			bind:map
+			zoom={14}
+			onclick={handleMapClick}
+		>
+			{#each pois as poi (poi.id)}
+				<Marker lngLat={[poi.longitude, poi.latitude]}>
+					<HoverCard.Root openDelay={200}>
+						<HoverCard.Trigger>
+							<Button
+								onclick={() => openEditForm(poi)}
+								class="flex size-10 items-center justify-center rounded-full bg-blue-600 p-2 text-white"
 							>
-								{#if poi.image_url}
-									<img src={poi.image_url} alt={poi.name} class="h-full w-full object-cover" />
-								{:else}
-									<div class="flex h-full w-full items-center justify-center">
-										<MapPin class="h-12 w-12 text-gray-300" />
+								<MapPin class="size-6" stroke-width={2} />
+							</Button>
+						</HoverCard.Trigger>
+						<HoverCard.Content class="w-80 overflow-hidden p-0">
+							<div class="flex flex-col">
+								<!-- POI Image -->
+								<div
+									class="relative h-32 overflow-hidden bg-gradient-to-br from-gray-100 to-gray-200"
+								>
+									{#if poi.image_url}
+										<img src={poi.image_url} alt={poi.name} class="h-full w-full object-cover" />
+									{:else}
+										<div class="flex h-full w-full items-center justify-center">
+											<MapPin class="h-12 w-12 text-gray-300" />
+										</div>
+									{/if}
+									<!-- Type Badge -->
+									<div class="absolute top-2 right-2">
+										<span
+											class="rounded-full bg-white/90 px-3 py-1.5 text-xs font-semibold text-gray-700 capitalize shadow-sm backdrop-blur-sm"
+										>
+											{poi.type}
+										</span>
 									</div>
-								{/if}
-								<!-- Type Badge -->
-								<div class="absolute top-2 right-2">
-									<span
-										class="rounded-full bg-white/90 px-3 py-1.5 text-xs font-semibold text-gray-700 capitalize shadow-sm backdrop-blur-sm"
-									>
-										{poi.type}
-									</span>
+								</div>
+
+								<!-- POI Content -->
+								<div class="space-y-2 p-4">
+									<!-- POI Name -->
+									<h4 class="line-clamp-2 text-base leading-tight font-bold text-gray-900">
+										{poi.name}
+									</h4>
+
+									<!-- POI Description -->
+									{#if poi.description}
+										<p class="line-clamp-3 text-sm leading-relaxed text-gray-600">
+											{poi.description}
+										</p>
+									{/if}
+
+									<!-- Tags -->
+									{#if poi.tags && poi.tags.length > 0}
+										<div class="flex flex-wrap gap-1 pt-1">
+											{#each poi.tags.slice(0, 5) as tag}
+												<span class="rounded-full bg-blue-100 px-2 py-1 text-xs text-blue-700">
+													#{tag}
+												</span>
+											{/each}
+											{#if poi.tags.length > 5}
+												<span class="text-xs text-gray-500">+{poi.tags.length - 5}</span>
+											{/if}
+										</div>
+									{/if}
 								</div>
 							</div>
-
-							<!-- POI Content -->
-							<div class="space-y-2 p-4">
-								<!-- POI Name -->
-								<h4 class="line-clamp-2 text-base leading-tight font-bold text-gray-900">
-									{poi.name}
-								</h4>
-
-								<!-- POI Description -->
-								{#if poi.description}
-									<p class="line-clamp-3 text-sm leading-relaxed text-gray-600">
-										{poi.description}
-									</p>
-								{/if}
-
-								<!-- Tags -->
-								{#if poi.tags && poi.tags.length > 0}
-									<div class="flex flex-wrap gap-1 pt-1">
-										{#each poi.tags.slice(0, 5) as tag}
-											<span class="rounded-full bg-blue-100 px-2 py-1 text-xs text-blue-700">
-												#{tag}
-											</span>
-										{/each}
-										{#if poi.tags.length > 5}
-											<span class="text-xs text-gray-500">+{poi.tags.length - 5}</span>
-										{/if}
-									</div>
-								{/if}
-							</div>
-						</div>
-					</HoverCard.Content>
-				</HoverCard.Root>
-			</Marker>
-		{/each}
-		<!-- Temporary marker for new POI -->
-		{#if tempMarkerPosition}
-			<Marker draggable lngLat={[tempMarkerPosition.lng, tempMarkerPosition.lat]}>
-				<div
-					class="flex size-10 items-center justify-center rounded-full bg-orange-500 p-2 text-white"
-				>
-					<MapPin class="size-6" stroke-width={2} />
-				</div>
-			</Marker>
-		{/if}
-	</MapLibre>
-</div>
-
-<!-- POI List -->
-<div
-	class="fixed right-2 bottom-2 z-10 flex max-h-[calc(100vh-6rem)] w-sm flex-col overflow-hidden rounded-lg border border-gray-300 bg-white"
->
-	<div class="p-3">
-		<!-- Validation Checklist -->
-		<div class="mb-3">
-			<ValidationChecklist title="Validation" checks={validationChecks} />
-		</div>
-		<h3 class="mt-3 text-lg font-semibold">Created POIs ({pois.length})</h3>
+						</HoverCard.Content>
+					</HoverCard.Root>
+				</Marker>
+			{/each}
+			<!-- Temporary marker for new POI -->
+			{#if tempMarkerPosition}
+				<Marker draggable lngLat={[tempMarkerPosition.lng, tempMarkerPosition.lat]}>
+					<div
+						class="flex size-10 items-center justify-center rounded-full bg-orange-500 p-2 text-white"
+					>
+						<MapPin class="size-6" stroke-width={2} />
+					</div>
+				</Marker>
+			{/if}
+			<!-- Map Controls -->
+			<NavigationControl position="top-left" />
+			<GeolocateControl position="top-left" />
+		</MapLibre>
 	</div>
 
-	{#if pois.length > 0}
-		<div class="flex-1 space-y-3 overflow-y-auto px-3 pb-3">
-			{#each pois as poi (poi.id)}
-				<div class="group flex flex-col overflow-hidden rounded-xl border border-gray-200 bg-white">
-					<!-- POI Image -->
-					<div class="relative h-32 overflow-hidden bg-gradient-to-br from-gray-100 to-gray-200">
-						{#if poi.image_url}
-							<img
-								src={poi.image_url}
-								alt={poi.name}
-								class="h-full w-full object-cover transition-transform duration-300"
-							/>
-						{:else}
-							<div class="flex h-full w-full items-center justify-center">
-								<MapPin class="h-12 w-12 text-gray-300" />
+	<!-- POI List -->
+	<div class="flex w-96 flex-col overflow-hidden rounded-lg border border-gray-300 bg-white">
+		<div class="p-3">
+			<!-- Validation Checklist -->
+			<div class="mb-3">
+				<ValidationChecklist title="Validation" checks={validationChecks} />
+			</div>
+			<h3 class="mt-3 text-lg font-semibold">Created POIs ({pois.length})</h3>
+		</div>
+
+		{#if pois.length > 0}
+			<div class="flex-1 space-y-3 overflow-y-auto px-3 pb-3">
+				{#each pois as poi (poi.id)}
+					<div
+						class="group flex flex-col overflow-hidden rounded-xl border border-gray-200 bg-white"
+					>
+						<!-- POI Image -->
+						<div class="relative h-32 overflow-hidden bg-gradient-to-br from-gray-100 to-gray-200">
+							{#if poi.image_url}
+								<img
+									src={poi.image_url}
+									alt={poi.name}
+									class="h-full w-full object-cover transition-transform duration-300"
+								/>
+							{:else}
+								<div class="flex h-full w-full items-center justify-center">
+									<MapPin class="h-12 w-12 text-gray-300" />
+								</div>
+							{/if}
+							<!-- Type Badge -->
+							<div class="absolute top-2 right-2">
+								<span
+									class="rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 capitalize"
+								>
+									{poi.type}
+								</span>
 							</div>
-						{/if}
-						<!-- Type Badge -->
-						<div class="absolute top-2 right-2">
-							<span
-								class="rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 capitalize"
-							>
-								{poi.type}
-							</span>
+						</div>
+
+						<!-- POI Content -->
+						<div class="flex flex-1 flex-col p-4">
+							<!-- POI Name -->
+							<h4 class="text-base leading-tight font-bold text-gray-900">
+								{poi.name}
+							</h4>
+
+							<!-- POI Description -->
+							<p class="line-clamp-3 flex-1 py-3 text-sm leading-relaxed text-gray-600">
+								{poi.description || 'No description provided.'}
+							</p>
+
+							<!-- Tags -->
+							{#if poi.tags && poi.tags.length > 0}
+								<div class="mb-3 flex flex-wrap gap-1">
+									{#each poi.tags.slice(0, 3) as tag}
+										<span class="rounded-full bg-blue-100 px-2 py-1 text-xs text-blue-700">
+											#{tag}
+										</span>
+									{/each}
+									{#if poi.tags.length > 3}
+										<span class="text-xs text-gray-500">+{poi.tags.length - 3}</span>
+									{/if}
+								</div>
+							{/if}
+
+							<!-- Action Buttons -->
+							<div class="flex gap-2">
+								<Button
+									variant="outline"
+									size="sm"
+									class="flex-1 text-red-600 hover:border-red-300 hover:bg-red-50 hover:text-red-700"
+									onclick={() => deletePOI(poi.id!)}
+								>
+									<Trash2 class="h-3.5 w-3.5" />
+								</Button>
+								<Button
+									variant="default"
+									size="sm"
+									class="flex-[2]"
+									onclick={() => openEditForm(poi)}
+								>
+									<SquarePen class="mr-1.5 h-3.5 w-3.5" />
+									Edit
+								</Button>
+							</div>
 						</div>
 					</div>
+				{/each}
+			</div>
+		{:else}
+			<div class="flex-1 px-3">
+				<p class="text-center text-gray-500">No POIs created yet. Click on the map to add one.</p>
+			</div>
+		{/if}
 
-					<!-- POI Content -->
-					<div class="flex flex-1 flex-col p-4">
-						<!-- POI Name -->
-						<h4 class="text-base leading-tight font-bold text-gray-900">
-							{poi.name}
-						</h4>
-
-						<!-- POI Description -->
-						<p class="line-clamp-3 flex-1 py-3 text-sm leading-relaxed text-gray-600">
-							{poi.description || 'No description provided.'}
-						</p>
-
-						<!-- Tags -->
-						{#if poi.tags && poi.tags.length > 0}
-							<div class="mb-3 flex flex-wrap gap-1">
-								{#each poi.tags.slice(0, 3) as tag}
-									<span class="rounded-full bg-blue-100 px-2 py-1 text-xs text-blue-700">
-										#{tag}
-									</span>
-								{/each}
-								{#if poi.tags.length > 3}
-									<span class="text-xs text-gray-500">+{poi.tags.length - 3}</span>
-								{/if}
-							</div>
-						{/if}
-
-						<!-- Action Buttons -->
-						<div class="flex gap-2">
-							<Button
-								variant="outline"
-								size="sm"
-								class="flex-1 text-red-600 hover:border-red-300 hover:bg-red-50 hover:text-red-700"
-								onclick={() => deletePOI(poi.id!)}
-							>
-								<Trash2 class="h-3.5 w-3.5" />
-							</Button>
-							<Button
-								variant="default"
-								size="sm"
-								class="flex-[2]"
-								onclick={() => openEditForm(poi)}
-							>
-								<SquarePen class="mr-1.5 h-3.5 w-3.5" />
-								Edit
-							</Button>
-						</div>
-					</div>
-				</div>
-			{/each}
-		</div>
-	{:else}
-		<div class="flex-1 px-3">
-			<p class="text-center text-gray-500">No POIs created yet. Click on the map to add one.</p>
-		</div>
-	{/if}
-
-	<div class="p-3">
-		<div class="flex justify-end gap-2">
-			<Button variant="outline" href={`/dashboard/games/${params.id}/edit/characters`} size="lg">
-				<ArrowLeft /> Back
-			</Button>
-			<Button href={`/dashboard/games/${params.id}/edit/cards`} size="lg"
-				>Next <ArrowRight /></Button
-			>
+		<div class="p-3">
+			<div class="flex justify-end gap-2">
+				<Button variant="outline" href={`/dashboard/games/${params.id}/edit/characters`} size="lg">
+					<ArrowLeft /> Back
+				</Button>
+				<Button href={`/dashboard/games/${params.id}/edit/cards`} size="lg"
+					>Next <ArrowRight /></Button
+				>
+			</div>
 		</div>
 	</div>
 </div>

@@ -28,6 +28,15 @@
 	const ALL_HERO_STEPS = 6;
 	const MIN_CARDS_PER_STEP = 2;
 
+	const allJourneySteps = {
+		call_to_adventure: 'Call to Adventure',
+		crossing_the_threshold: 'Crossing the Threshold',
+		meeting_the_mentor: 'Meeting the Mentor',
+		trials_and_growth: 'Trials and Growth',
+		death_and_transformation: 'Death and Transformation',
+		change_and_return: 'Change and Return'
+	};
+
 	// Validation checks
 	const validation = $derived.by(() => {
 		const issues = [];
@@ -330,15 +339,6 @@
 
 		return data.locationData;
 	});
-
-	const allJourneySteps = {
-		call_to_adventure: 'Call to Adventure',
-		crossing_the_threshold: 'Crossing the Threshold',
-		meeting_the_mentor: 'Meeting the Mentor',
-		trials_and_growth: 'Trials and Growth',
-		death_and_transformation: 'Death and Transformation',
-		change_and_return: 'Change and Return'
-	};
 </script>
 
 <div class="mx-auto w-full max-w-5xl space-y-8 p-6">
