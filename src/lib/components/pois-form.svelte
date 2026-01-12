@@ -543,7 +543,7 @@
 				<Form.Control>
 					{#snippet children({ props })}
 						<Form.Label for="name">POI Name</Form.Label>
-						<Form.Description>Enter the name of the point of interest</Form.Description>
+						<Form.Description>Enter the name of the point of interest.</Form.Description>
 						<Input
 							{...props}
 							bind:value={$formData.name}
@@ -578,7 +578,7 @@
 				<Form.Control>
 					{#snippet children({ props })}
 						<Form.Label for="description">Description</Form.Label>
-						<Form.Description>A brief description of the character</Form.Description>
+						<Form.Description>A brief description of the location.</Form.Description>
 						<Textarea
 							{...props}
 							bind:value={$formData.description}
@@ -613,7 +613,7 @@
 				<Form.Control>
 					{#snippet children({ props })}
 						<Form.Label class="font-bold">POI Image</Form.Label>
-						<Form.Description>Upload an image for this point of interest</Form.Description>
+						<Form.Description>Upload an image for this point of interest.</Form.Description>
 						{#if imagePreview}
 							<div class="relative">
 								<img
@@ -686,7 +686,7 @@
 				<Form.Control>
 					{#snippet children({ props })}
 						<Form.Label for="tags">Tags</Form.Label>
-						<Form.Description>Add keywords to categorize this POI</Form.Description>
+						<Form.Description>Add keywords to categorize this POI.</Form.Description>
 						<div class="flex gap-2">
 							<Input
 								type="text"
