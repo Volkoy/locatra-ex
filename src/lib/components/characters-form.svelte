@@ -528,8 +528,12 @@
 				<Form.Control>
 					{#snippet children({ props })}
 						<Form.Label class="font-bold">Character Name</Form.Label>
-						<Form.Description>The name of the character</Form.Description>
-						<Input {...props} bind:value={$formData.name} placeholder="e.g., Species name" />
+						<Form.Description>The name of the character.</Form.Description>
+						<Input
+							{...props}
+							bind:value={$formData.name}
+							placeholder="e.g., Species name, Profession, Nickname"
+						/>
 					{/snippet}
 				</Form.Control>
 				<Form.FieldErrors />
@@ -540,7 +544,7 @@
 				<Form.Control>
 					{#snippet children({ props })}
 						<Form.Label class="font-bold">Character Summary</Form.Label>
-						<Form.Description>A brief description of the character</Form.Description>
+						<Form.Description>A brief description of the character.</Form.Description>
 						<Textarea
 							{...props}
 							bind:value={$formData.summary}
@@ -557,7 +561,7 @@
 				<Form.Control>
 					{#snippet children({ props })}
 						<Form.Label class="font-bold">Category</Form.Label>
-						<Form.Description>Select the character type</Form.Description>
+						<Form.Description>Choose if the character is human or non-human.</Form.Description>
 						<Select.Root type="single" bind:value={$formData.category}>
 							<Select.Trigger {...props} class="w-full">
 								{$formData.category === 'human' ? 'Human' : 'Non-Human'}
