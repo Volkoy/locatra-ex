@@ -1,11 +1,11 @@
 import type { LayoutServerLoad } from './$types'
 import { loadFlash } from 'sveltekit-flash-message/server';
 
-export const load: LayoutServerLoad =loadFlash(async ({ locals: { safeGetSession }, cookies }) => {
-  const { session, claims } = await safeGetSession()
+export const load: LayoutServerLoad =loadFlash(async ({ locals: { getSession }, cookies }) => {
+  const session = await getSession()
   return {
     session,
-    claims,
+    isAuthenticated: !!session && !session.user.is_anonymous,
     cookies: cookies.getAll(),
   }
 });

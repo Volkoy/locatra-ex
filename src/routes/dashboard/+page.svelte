@@ -8,11 +8,10 @@
 		Plus,
 		Trash2,
 		SquarePen,
-		MoreVertical,
 		Eye,
-		Upload,
 		Download,
-		EllipsisVertical
+		EllipsisVertical,
+		BookOpen
 	} from 'lucide-svelte';
 	import { toast } from 'svelte-sonner';
 	import { goto, invalidateAll } from '$app/navigation';
@@ -33,41 +32,14 @@
 			body: formData
 		});
 
-		const result = await response.json();
+		const result = (await response.json()) as { data?: { message?: string } };
 
 		if (response.ok) {
 			toast.success(`"${title}" deleted successfully`);
 			await invalidateAll();
 		} else {
-			const errorMessage = result?.message || 'Failed to delete game';
+			const errorMessage = result?.data?.message || 'Failed to delete game';
 			toast.error(errorMessage);
-		}
-	};
-
-	const publishGame = async (gameId: string, title: string) => {
-		const formData = new FormData();
-		formData.append('gameId', gameId);
-
-		const response = await fetch('?/publish', {
-			method: 'POST',
-			body: formData
-		});
-
-		const result = await response.json();
-
-		if (response.ok) {
-			toast.success(`"${title}" published successfully`);
-			await invalidateAll();
-		} else {
-			const errorMessage = result?.message || 'Failed to publish game';
-			toast.error(errorMessage);
-
-			// Show validation errors if present
-			if (result?.validationErrors && result.validationErrors.length > 0) {
-				result.validationErrors.forEach((error: string) => {
-					toast.error(error);
-				});
-			}
 		}
 	};
 
@@ -80,13 +52,13 @@
 			body: formData
 		});
 
-		const result = await response.json();
+		const result = (await response.json()) as { data?: { message?: string } };
 
 		if (response.ok) {
 			toast.success(`"${title}" unpublished successfully`);
 			await invalidateAll();
 		} else {
-			const errorMessage = result?.message || 'Failed to unpublish game';
+			const errorMessage = result?.data?.message || 'Failed to unpublish game';
 			toast.error(errorMessage);
 		}
 	};
@@ -114,7 +86,7 @@
 
 <main class="mx-auto h-screen p-6">
 	<div class="mt-4 flex items-center justify-between">
-		<h3 class="text-2xl font-bold">Your Games</h3>
+		<h3 class="text-2xl font-bold text-dark-green">Your Games</h3>
 		<Button href="/dashboard/games/new">
 			<Plus class="h-4 w-4" /> Create new game
 		</Button>
@@ -137,14 +109,16 @@
 		</Empty.Root>
 	{:else}
 		<div class="mt-6 flex flex-wrap gap-4">
-			{#each games as game}
-				<div class="flex w-xs flex-col rounded-lg border">
+			{#each games as game (game.game_id)}
+				<div
+					class="flex w-xs flex-col rounded-xl border-1 border-dark-green bg-primary-foreground/25 shadow-sm shadow-dark-green/10 transition-all hover:bg-gray-100 hover:shadow-lg"
+				>
 					<div class="flex flex-grow flex-col">
 						{#if game.image_url}
 							<img
 								src={game.image_url}
 								alt="Cover"
-								class="mb-4 aspect-video h-40 w-full object-cover"
+								class="mb-4 aspect-video h-40 w-full rounded-t-lg object-cover"
 							/>
 						{:else}
 							<div
@@ -156,15 +130,18 @@
 						<div class="flex flex-grow flex-col px-4 pb-4">
 							<div class="mb-2 flex items-start justify-between gap-2">
 								<h4 class="text-xl font-semibold">{game.title || 'Untitled Game'}</h4>
-								<Badge variant={getStatusVariant(game.status || 'draft')} class="capitalize">
+								<Badge
+									variant={getStatusVariant(game.status || 'draft')}
+									class="px-3 py-1 uppercase"
+								>
 									{game.status || 'draft'}
 								</Badge>
 							</div>
 							<p class="mt-2 text-sm text-gray-600">{game.description || 'No description'}</p>
 							<div class="mt-4 flex flex-wrap">
-								{#each game.categories as category}
+								{#each game.categories as category (category)}
 									<span
-										class="mt-2 mr-2 w-fit rounded-full bg-blue-100 px-3 py-1 text-xs font-medium text-blue-800"
+										class="mt-2 mr-2 w-fit rounded-full bg-dark-green/25 px-3 py-1 text-xs font-medium text-dark-green"
 										>{category}</span
 									>
 								{/each}
@@ -191,9 +168,8 @@
 									onclick={() => goto(`/dashboard/games/${game.game_id}/edit/review`)}
 								>
 									<Eye class="mr-2 h-4 w-4" />
-									Review
+									{game.status === 'published' ? 'Review' : 'Review & Publish'}
 								</DropdownMenu.Item>
-								<DropdownMenu.Separator />
 								{#if game.status === 'published'}
 									<DropdownMenu.Item
 										onclick={() => unpublishGame(game.game_id, game.title || 'Untitled Game')}
@@ -201,17 +177,13 @@
 										<Download class="mr-2 h-4 w-4" />
 										Unpublish
 									</DropdownMenu.Item>
-								{:else}
-									<DropdownMenu.Item
-										onclick={() => publishGame(game.game_id, game.title || 'Untitled Game')}
-									>
-										<Upload class="mr-2 h-4 w-4" />
-										Publish
-									</DropdownMenu.Item>
 								{/if}
+								<DropdownMenu.Item onclick={() => goto(`/play/${game.game_id}/stories`)}>
+									<BookOpen class="mr-2 h-4 w-4" />
+									View stories
+								</DropdownMenu.Item>
 								<DropdownMenu.Separator />
 								<DropdownMenu.Item
-									class="text-red-600 focus:text-red-600"
 									onclick={() => deleteGame(game.game_id, game.title || 'Untitled Game')}
 								>
 									<Trash2 class="mr-2 h-4 w-4" />

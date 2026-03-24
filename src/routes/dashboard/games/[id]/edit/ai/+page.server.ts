@@ -2,39 +2,11 @@ import type { PageServerLoad, Actions } from './$types';
 import { superValidate } from 'sveltekit-superforms';
 import { zod4 } from 'sveltekit-superforms/adapters';
 import { aiCompanionSchema, type AICompanionFormData } from '$lib/zod/schema';
-import { fail, redirect } from '@sveltejs/kit';
+import { fail } from '@sveltejs/kit';
 
-export const load: PageServerLoad = async ({ params, locals: { supabase, safeGetSession } }) => {
-    const { session } = await safeGetSession();
-    
-    if (!session) {
-        throw redirect(303, '/auth');
-    }
+export const load: PageServerLoad = async ({ parent }) => {
+    const { game, aiConfig } = await parent();
 
-    // Verify game ownership
-    const { data: game, error: gameError } = await supabase
-        .from('games')
-        .select('id, game_id')
-        .eq('game_id', params.id)
-        .eq('owner_id', session.user.id)
-        .single();
-
-    if (gameError || !game) {
-        throw redirect(303, '/dashboard');
-    }
-
-    // Fetch existing AI companion config
-    const { data: aiConfig, error: aiConfigError } = await supabase
-        .from('ai_companion_configs')
-        .select('*')
-        .eq('game_id', game.id)
-        .single();
-
-    if (aiConfigError && aiConfigError.code !== 'PGRST116') {
-        console.error('Error fetching AI config:', aiConfigError);
-    }
-
-    // Prepare data for form
     const formData = aiConfig ? {
         id: aiConfig.id,
         name: aiConfig.name || 'Sage',
@@ -111,8 +83,8 @@ Remember: You're part of an immersive location-based storytelling experience. He
 }
 
 export const actions = {
-    save: async ({ request, params, locals: { supabase, safeGetSession } }) => {
-        const { session } = await safeGetSession();
+    save: async ({ request, params, locals: { supabase, getSession } }) => {
+        const session = await getSession();
         
         if (!session) {
             return fail(401, { message: 'Unauthorized' });

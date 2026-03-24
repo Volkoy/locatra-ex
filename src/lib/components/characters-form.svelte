@@ -1,14 +1,7 @@
 <script lang="ts">
-	import {
-		ArrowLeft,
-		ArrowRight,
-		Plus,
-		SquarePen,
-		Trash2,
-		Upload,
-		UserRound,
-		X
-	} from 'lucide-svelte';
+	import { ArrowLeft, ArrowRight, Plus, SquarePen, Trash2, UserRound } from 'lucide-svelte';
+	import * as Tooltip from '$lib/components/ui/tooltip/index.js';
+	import ImageUpload from './image-upload.svelte';
 	import { Input } from '$lib/components/ui/input/index.js';
 	import * as Empty from '$lib/components/ui/empty/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
@@ -17,12 +10,10 @@
 	import * as Field from '$lib/components/ui/field/index.js';
 	import * as Sheet from '$lib/components/ui/sheet/index.js';
 	import { Textarea } from '$lib/components/ui/textarea/index.js';
-	import ValidationChecklist from './validation-checklist.svelte';
 	import { superForm } from 'sveltekit-superforms';
 	import { characterSchema } from '$lib/zod/schema';
 	import { zod4Client } from 'sveltekit-superforms/adapters';
 	import { invalidateAll } from '$app/navigation';
-	import Label from './ui/label/label.svelte';
 	import { toast } from 'svelte-sonner';
 	import Spinner from './ui/spinner/spinner.svelte';
 
@@ -34,14 +25,14 @@
 		summary: string;
 		image_url?: string;
 		category: 'human' | 'non-human';
+		bg_color: string;
+		text_color: string;
 	};
 
 	let characters = $derived<Character[]>(data.characters || []);
 	let isFormOpen = $state(false);
 	let editingCharacter = $state<Character | null>(null);
-	let imagePreview = $state<string | null>(null);
-	let isUploadingImage = $state(false);
-	let imageTimestamp = $state(Date.now());
+	let previewImageSrc = $state<string | null>(null);
 
 	// Search and sort state
 	let searchQuery = $state('');
@@ -56,14 +47,13 @@
 				const action = editingCharacter ? 'updated' : 'created';
 				toast.success(`Character ${action} successfully!`);
 				isFormOpen = false;
-				imagePreview = null;
 				editingCharacter = null;
 				invalidateAll(); // Refresh the character list
 			}
 		}
 	});
 
-	const { form: formData, errors, enhance, delayed } = form;
+	const { form: formData, enhance, delayed } = form;
 
 	// Filtered and sorted characters
 	let filteredCharacters = $derived.by(() => {
@@ -83,161 +73,31 @@
 		});
 	});
 
-	const MIN_CHARACTERS = 2;
-
-	const validationChecks = $derived.by(
-		(): Array<{
-			label: string;
-			status: 'complete' | 'incomplete' | 'warning';
-			description: string;
-		}> => {
-			const humanChars = characters.filter((c: any) => c.category === 'human').length;
-			const nonHumanChars = characters.filter((c: any) => c.category === 'non-human').length;
-			const charsWithoutImages = characters.filter((c: any) => !c.image_url).length;
-
-			return [
-				{
-					label: `At least ${MIN_CHARACTERS} characters`,
-					status: (characters.length >= MIN_CHARACTERS ? 'complete' : 'incomplete') as
-						| 'complete'
-						| 'incomplete',
-					description: `Required (${characters.length} created)`
-				},
-				{
-					label: 'Both human and non-human',
-					status: (characters.length >= MIN_CHARACTERS && humanChars > 0 && nonHumanChars > 0
-						? 'complete'
-						: characters.length >= MIN_CHARACTERS
-							? 'warning'
-							: 'incomplete') as 'complete' | 'incomplete' | 'warning',
-					description: 'Recommended for variety'
-				},
-				{
-					label: 'Character images',
-					status: (characters.length === 0
-						? 'incomplete'
-						: charsWithoutImages === 0
-							? 'complete'
-							: 'warning') as 'complete' | 'incomplete' | 'warning',
-					description:
-						characters.length === 0
-							? 'No characters yet'
-							: charsWithoutImages > 0
-								? `${charsWithoutImages} missing image${charsWithoutImages > 1 ? 's' : ''}`
-								: 'All characters have images'
-				}
-			];
-		}
-	);
-
 	const openCreateForm = () => {
 		editingCharacter = null;
-		imagePreview = null;
 		$formData.id = undefined;
 		$formData.name = '';
 		$formData.summary = '';
 		$formData.image_url = '';
 		$formData.category = 'human';
+		$formData.bg_color = '#ffffff';
+		$formData.text_color = '#000000';
+		previewImageSrc = null;
 		isFormOpen = true;
 	};
 
-	const openEditForm = (character: any) => {
+	const openEditForm = (character: Character) => {
 		editingCharacter = character;
 		$formData.id = character.id;
 		$formData.name = character.name;
 		$formData.summary = character.summary;
 		$formData.image_url = character.image_url || '';
 		$formData.category = character.category;
-		imagePreview = character.image_url ? `${character.image_url}?t=${Date.now()}` : null;
+		$formData.bg_color = character.bg_color || '#ffffff';
+		$formData.text_color = character.text_color || '#000000';
+		previewImageSrc = character.image_url || null;
 		isFormOpen = true;
 	};
-
-	async function handleImageUpload(event: Event) {
-		const input = event.target as HTMLInputElement;
-		const file = input.files?.[0];
-
-		if (!file) return;
-
-		if (!file.type.startsWith('image/')) {
-			alert('Please select an image file');
-			return;
-		}
-
-		if (file.size > 10 * 1024 * 1024) {
-			alert('Image must be less than 10MB');
-			return;
-		}
-
-		const oldImageUrl = $formData.image_url;
-
-		// Show preview immediately
-		const reader = new FileReader();
-		reader.onload = (e) => {
-			imagePreview = e.target?.result as string;
-		};
-		reader.readAsDataURL(file);
-
-		// Upload to Supabase
-		await uploadImageToSupabase(file, oldImageUrl);
-	}
-
-	async function uploadImageToSupabase(file: File, oldImageUrl?: string | null) {
-		isUploadingImage = true;
-		try {
-			if (!session) {
-				alert('You must be logged in to upload images');
-				return;
-			}
-
-			const fileExt = file.name.split('.').pop();
-			const fileName = `${editingCharacter?.id || 'new'}-${Date.now()}.${fileExt}`;
-			const filePath = `${session.user.id}/${params.id}/characters/${fileName}`;
-
-			// Delete old image if exists
-			if (oldImageUrl && oldImageUrl.trim() !== '') {
-				try {
-					const urlWithoutParams = oldImageUrl.split('?')[0];
-					const url = new URL(urlWithoutParams);
-					const pathParts = url.pathname.split('/');
-					const oldPath = pathParts.slice(-4).join('/');
-
-					await supabase.storage.from('game-images').remove([oldPath]);
-				} catch (error) {
-					console.warn('Error deleting old image:', error);
-				}
-			}
-
-			const { error } = await supabase.storage.from('game-images').upload(filePath, file, {
-				cacheControl: '3600',
-				upsert: true
-			});
-
-			if (error) {
-				console.error('Upload error:', error);
-				alert('Failed to upload image: ' + error.message);
-				return;
-			}
-
-			const {
-				data: { publicUrl }
-			} = supabase.storage.from('game-images').getPublicUrl(filePath);
-
-			$formData.image_url = publicUrl;
-			imageTimestamp = Date.now();
-			// Don't update imagePreview - keep showing the local data URL
-		} catch (error) {
-			console.error('Upload error:', error);
-			alert('Failed to upload image');
-		} finally {
-			isUploadingImage = false;
-		}
-	}
-
-	function removeImage() {
-		if (isUploadingImage) return;
-		imagePreview = null;
-		$formData.image_url = '';
-	}
 
 	async function deleteCharacter(id: string) {
 		if (!confirm('Are you sure you want to delete this character?')) return;
@@ -260,172 +120,152 @@
 </script>
 
 <div class="mx-auto w-full flex-1">
-	<div class="grid grid-cols-1 gap-2 lg:grid-cols-3">
-		<!-- Main Content -->
-		<div class="lg:col-span-2">
-			<div class="space-y-6 rounded-lg border border-gray-300 bg-white p-6">
-				<div class="mb-6">
-					<h2 class="text-2xl font-semibold">Characters</h2>
-					<p class="text-gray-600">
-						Create characters that players can embody during the game. Players can choose from these
-						characters when joining a game and write their story from the character's perspective.
-					</p>
-				</div>
-
-				{#if characters.length === 0}
-					<Empty.Root>
-						<Empty.Header>
-							<Empty.Media variant="icon">
-								<UserRound />
-							</Empty.Media>
-							<Empty.Title>No Characters Yet</Empty.Title>
-							<Empty.Description>
-								Create your first character to get started. Characters offer unique perspectives and
-								roles in your game's story.
-							</Empty.Description>
-						</Empty.Header>
-						<Empty.Content>
-							<Button size="lg" onclick={openCreateForm}>
-								<Plus class="mr-2 h-5 w-5" />
-								Create Character
-							</Button>
-						</Empty.Content>
-					</Empty.Root>
-				{:else}
-					<div class="flex gap-4">
-						<Field.Field class="max-w-[320px]">
-							<Field.Label for="search">Search Characters</Field.Label>
-							<Input
-								id="search"
-								type="text"
-								placeholder="Search by name or summary..."
-								bind:value={searchQuery}
-							/>
-						</Field.Field>
-						<Field.Field orientation="responsive" class="max-w-[180px]">
-							<Field.Label for="sort">Sort By</Field.Label>
-							<Select.Root type="single" bind:value={sortBy}>
-								<Select.Trigger id="sort">
-									{sortBy === 'name' ? 'Name' : 'Category'}
-								</Select.Trigger>
-								<Select.Content>
-									<Select.Item value="name">Name</Select.Item>
-									<Select.Item value="category">Category</Select.Item>
-								</Select.Content>
-							</Select.Root>
-						</Field.Field>
-					</div>
-
-					<!-- Character Grid -->
-					<div class="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3">
-						<!-- Add Character Card -->
-						<button
-							onclick={openCreateForm}
-							class="group flex min-h-[280px] flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed border-gray-300 p-4 transition-all hover:cursor-pointer hover:border-primary hover:bg-gray-50 sm:aspect-[3/4] sm:p-6"
-						>
-							<div
-								class="flex h-16 w-16 items-center justify-center rounded-full bg-gray-100 transition-colors group-hover:bg-primary/10"
-							>
-								<Plus class="h-8 w-8 text-gray-400 transition-colors group-hover:text-primary" />
-							</div>
-							<span class="font-medium text-gray-600 transition-colors group-hover:text-primary"
-								>Add New Character</span
-							>
-						</button>
-
-						<!-- Character Cards -->
-						{#each filteredCharacters as character (character.id)}
-							<div
-								class="group flex min-h-[280px] flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm transition-all hover:shadow-lg sm:aspect-[3/4]"
-							>
-								<!-- Character Image -->
-								<div
-									class="relative h-32 overflow-hidden bg-gradient-to-br from-gray-100 to-gray-200 sm:aspect-video sm:h-1/2 sm:min-h-2/5"
-								>
-									{#if character.image_url}
-										<img
-											src={character.image_url}
-											alt="{character.name} avatar"
-											class="h-full w-full object-cover"
-										/>
-									{:else}
-										<div class="flex h-full w-full items-center justify-center">
-											<UserRound class="h-16 w-16 text-gray-300" />
-										</div>
-									{/if}
-									<!-- Category Badge -->
-									<div class="absolute top-3 right-3">
-										<span
-											class="rounded-full bg-white/90 px-3 py-1.5 text-xs font-semibold text-gray-700 shadow-sm backdrop-blur-sm"
-										>
-											{character.category === 'human' ? 'Human' : 'Non-Human'}
-										</span>
-									</div>
-								</div>
-
-								<!-- Character Content -->
-								<div class="flex flex-1 flex-col p-3 sm:p-4">
-									<!-- Character Name -->
-									<h3
-										class="text-base leading-tight font-bold text-balance break-words text-gray-900 sm:text-lg"
-									>
-										{character.name}
-									</h3>
-
-									<!-- Character Summary -->
-									<p
-										class="line-clamp-3 flex-1 py-2 text-xs leading-relaxed break-words text-gray-600 sm:text-sm"
-									>
-										{character.summary}
-									</p>
-
-									<!-- Action Buttons -->
-									<div class="mt-3 flex gap-2 sm:mt-4">
-										<Button
-											variant="outline"
-											size="sm"
-											class="min-h-[40px] flex-1 text-red-600 hover:border-red-300 hover:bg-red-50 hover:text-red-700"
-											onclick={() => deleteCharacter(character.id)}
-										>
-											<Trash2 class="h-4 w-4" />
-										</Button>
-										<Button
-											variant="default"
-											size="sm"
-											class="min-h-[40px] flex-[2]"
-											onclick={() => openEditForm(character)}
-										>
-											<SquarePen class="mr-1.5 h-4 w-4" />
-											<span class="text-sm">Edit</span>
-										</Button>
-									</div>
-								</div>
-							</div>
-						{/each}
-					</div>
-
-					<!-- Empty Search State -->
-					{#if filteredCharacters.length === 0}
-						<div class="py-12 text-center">
-							<p class="text-gray-500">No characters found matching "{searchQuery}"</p>
-						</div>
-					{/if}
-				{/if}
-
-				<div class="mt-8 flex w-full justify-end gap-4">
-					<Button variant="outline" size="lg" href={`/dashboard/games/${params.id}/edit/general`}>
-						<ArrowLeft /> Back
-					</Button>
-					<Button size="lg" href={`/dashboard/games/${params.id}/edit/pois`}
-						>Next <ArrowRight /></Button
-					>
-				</div>
-			</div>
+	<div class="space-y-6 rounded-lg border border-gray-300 bg-white p-6">
+		<div class="mb-6">
+			<h2 class="text-2xl font-semibold">Characters</h2>
+			<p class="text-gray-600">
+				Create characters that players can embody during the game. Players can choose from these
+				characters when joining a game and write their story from the character's perspective.
+			</p>
 		</div>
 
-		<!-- Validation Checklist Sidebar -->
-		<div class="">
-			<ValidationChecklist title="Validation Checklist" checks={validationChecks} />
+		{#if characters.length === 0}
+			<Empty.Root>
+				<Empty.Header>
+					<Empty.Media variant="icon">
+						<UserRound />
+					</Empty.Media>
+					<Empty.Title>No Characters Yet</Empty.Title>
+					<Empty.Description>
+						Create your first character to get started. Characters offer unique perspectives and
+						roles in your game's story.
+					</Empty.Description>
+				</Empty.Header>
+				<Empty.Content>
+					<Button size="lg" onclick={openCreateForm}>
+						<Plus class="mr-2 h-5 w-5" />
+						Create Character
+					</Button>
+				</Empty.Content>
+			</Empty.Root>
+		{:else}
+			<div class="flex gap-4">
+				<Field.Field class="max-w-[320px]">
+					<Field.Label for="search">Search Characters</Field.Label>
+					<Input
+						id="search"
+						type="text"
+						placeholder="Search by name or summary..."
+						bind:value={searchQuery}
+					/>
+				</Field.Field>
+				<Field.Field orientation="responsive" class="max-w-[180px]">
+					<Field.Label for="sort">Sort By</Field.Label>
+					<Select.Root type="single" bind:value={sortBy}>
+						<Select.Trigger id="sort">
+							{sortBy === 'name' ? 'Name' : 'Category'}
+						</Select.Trigger>
+						<Select.Content>
+							<Select.Item value="name">Name</Select.Item>
+							<Select.Item value="category">Category</Select.Item>
+						</Select.Content>
+					</Select.Root>
+				</Field.Field>
+			</div>
+
+			<!-- Character Grid -->
+			<div class="flex flex-wrap gap-3">
+				<!-- Add Character Card -->
+				<button
+					onclick={openCreateForm}
+					class="group flex w-72 flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-gray-200 py-8 transition-all hover:cursor-pointer hover:border-primary hover:bg-gray-50"
+				>
+					<Plus class="h-6 w-6 text-gray-400 transition-colors group-hover:text-primary" />
+					<span class="text-xs font-medium text-gray-500 transition-colors group-hover:text-primary"
+						>Add Character</span
+					>
+				</button>
+
+				<!-- Character Cards -->
+				{#each filteredCharacters as character (character.id)}
+					<div
+						class="group inside-border relative flex aspect-[2/3] w-72 flex-col justify-between overflow-hidden rounded-xl border-8 border-white outline-2 outline-gray-200"
+						style="background-color: {character.bg_color ||
+							'#ffffff'}; color: {character.text_color || '#000000'}"
+					>
+						<!-- Image -->
+						<div
+							class="flex h-1/2 w-full shrink-0 items-center justify-center overflow-hidden"
+							style="background-color: color-mix(in srgb, {character.bg_color ||
+								'#ffffff'} 80%, #888)"
+						>
+							{#if character.image_url}
+								<img
+									src={character.image_url}
+									alt="{character.name} avatar"
+									class="h-full w-full object-cover"
+								/>
+							{:else}
+								<UserRound class="h-16 w-16 opacity-30" />
+							{/if}
+						</div>
+
+						<!-- Content -->
+						<div class="flex w-full flex-col items-center gap-1 px-4 py-4 text-center">
+							<span
+								class="rounded-full px-2 py-0.5 text-xs font-semibold opacity-60"
+								style="border: 1px solid currentColor"
+							>
+								{character.category === 'human' ? 'Human' : 'Non-Human'}
+							</span>
+							<Tooltip.Provider>
+								<Tooltip.Root>
+									<Tooltip.Trigger class="w-full">
+										<h3 class="mt-1 line-clamp-1 w-full text-base leading-tight font-bold">
+											{character.name}
+										</h3>
+									</Tooltip.Trigger>
+									<Tooltip.Content>{character.name}</Tooltip.Content>
+								</Tooltip.Root>
+							</Tooltip.Provider>
+							<Tooltip.Provider>
+								<Tooltip.Root>
+									<Tooltip.Trigger class="w-full">
+										<p class="line-clamp-3 w-full text-xs leading-relaxed opacity-70">
+											{character.summary}
+										</p>
+									</Tooltip.Trigger>
+									<Tooltip.Content class="max-w-xs">{character.summary}</Tooltip.Content>
+								</Tooltip.Root>
+							</Tooltip.Provider>
+						</div>
+
+						<div class="flex w-full items-center gap-2 p-2">
+							<Button size="sm" class="flex-1" onclick={() => openEditForm(character)}>
+								<SquarePen class="h-4 w-4" /> Edit
+							</Button>
+							<Button size="sm" variant="destructive" onclick={() => deleteCharacter(character.id)}>
+								<Trash2 class="h-4 w-4" />
+							</Button>
+						</div>
+					</div>
+				{/each}
+			</div>
+
+			<!-- Empty Search State -->
+			{#if filteredCharacters.length === 0}
+				<div class="py-12 text-center">
+					<p class="text-gray-500">No characters found matching "{searchQuery}"</p>
+				</div>
+			{/if}
+		{/if}
+
+		<div class="mt-8 flex w-full justify-end gap-4">
+			<Button variant="outline" size="lg" href={`/dashboard/games/${params.id}/edit/general`}>
+				<ArrowLeft /> Back
+			</Button>
+			<Button size="lg" href={`/dashboard/games/${params.id}/edit/pois`}>Next <ArrowRight /></Button
+			>
 		</div>
 	</div>
 </div>
@@ -454,69 +294,25 @@
 				<Form.Control>
 					{#snippet children({ props })}
 						<Form.Label class="font-bold">Character Avatar</Form.Label>
-						<Form.Description>Upload an image for the character</Form.Description>
-						{#if imagePreview}
-							<div class="relative">
-								<img
-									src={imagePreview}
-									alt="Preview"
-									class="aspect-video w-full rounded-lg object-cover"
-								/>
-								{#if isUploadingImage}
-									<div
-										class="absolute inset-0 flex items-center justify-center rounded-lg bg-black/50"
-									>
-										<svg
-											class="h-8 w-8 animate-spin text-white"
-											xmlns="http://www.w3.org/2000/svg"
-											fill="none"
-											viewBox="0 0 24 24"
-										>
-											<circle
-												class="opacity-25"
-												cx="12"
-												cy="12"
-												r="10"
-												stroke="currentColor"
-												stroke-width="4"
-											></circle>
-											<path
-												class="opacity-75"
-												fill="currentColor"
-												d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-											></path>
-										</svg>
-									</div>
-								{/if}
-								<Button
-									type="button"
-									variant="destructive"
-									size="icon"
-									class="absolute top-2 right-2"
-									onclick={removeImage}
-									disabled={isUploadingImage}
-								>
-									<X class="h-4 w-4" />
-								</Button>
-							</div>
-						{:else}
-							<Label
-								for="image-upload"
-								class="flex aspect-video w-full cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed border-gray-300 transition hover:border-gray-400"
-							>
-								<Upload class="h-12 w-12 text-gray-400" />
-								<p class="mt-2 text-sm text-gray-600">Click to upload avatar</p>
-								<p class="text-xs text-gray-500">PNG, JPG up to 10MB</p>
-								<input
-									id="image-upload"
-									type="file"
-									accept="image/*"
-									class="hidden"
-									onchange={handleImageUpload}
-									disabled={isUploadingImage}
-								/>
-							</Label>
-						{/if}
+						<Form.Description>
+							Upload an image for the character (PNG, JPG, WEBP · max 50 MB — cropped to 1:1).
+						</Form.Description>
+						<ImageUpload
+							aspectRatio={1}
+							currentImageUrl={$formData.image_url}
+							storagePath="{session.user.id}/{params.id}/characters/{editingCharacter?.id ?? 'new'}"
+							{supabase}
+							onPreview={(url) => {
+								previewImageSrc = url;
+							}}
+							onUploaded={(url) => {
+								$formData.image_url = url;
+							}}
+							onRemoved={() => {
+								$formData.image_url = '';
+								previewImageSrc = null;
+							}}
+						/>
 						<input type="hidden" {...props} bind:value={$formData.image_url} />
 					{/snippet}
 				</Form.Control>
@@ -576,19 +372,111 @@
 				<Form.FieldErrors />
 			</Form.Field>
 
-			<Sheet.Footer class="flex flex-row justify-end gap-2">
-				<Button type="button" variant="outline" onclick={() => (isFormOpen = false)}>Cancel</Button>
-				<Button type="submit" disabled={$delayed}>
-					{#if $delayed}
-						<span class="flex items-center gap-2">
-							<Spinner />
-							Saving...
+			<!-- Card Colors -->
+			<div class="space-y-3">
+				<p class="text-sm font-bold">Card Colors</p>
+				<div class="flex gap-4">
+					<Form.Field {form} name="bg_color" class="flex-1">
+						<Form.Control>
+							{#snippet children({ props })}
+								<Form.Label class="text-sm">Background</Form.Label>
+								<div class="flex items-center gap-2">
+									<input
+										{...props}
+										type="color"
+										bind:value={$formData.bg_color}
+										class="h-9 w-12 cursor-pointer rounded border p-0.5"
+									/>
+									<Input bind:value={$formData.bg_color} class="font-mono text-sm" />
+								</div>
+							{/snippet}
+						</Form.Control>
+					</Form.Field>
+					<Form.Field {form} name="text_color" class="flex-1">
+						<Form.Control>
+							{#snippet children({ props })}
+								<Form.Label class="text-sm">Text</Form.Label>
+								<div class="flex items-center gap-2">
+									<input
+										{...props}
+										type="color"
+										bind:value={$formData.text_color}
+										class="h-9 w-12 cursor-pointer rounded border p-0.5"
+									/>
+									<Input bind:value={$formData.text_color} class="font-mono text-sm" />
+								</div>
+							{/snippet}
+						</Form.Control>
+					</Form.Field>
+				</div>
+			</div>
+
+			<!-- Card Preview -->
+			<div class="space-y-2">
+				<p class="text-sm font-bold">Preview</p>
+				<div
+					class="inside-border relative mx-auto flex aspect-[2/3] w-72 flex-col gap-4 overflow-hidden rounded-xl border-8 border-white outline-2 outline-gray-200"
+					style="background-color: {$formData.bg_color}; color: {$formData.text_color}"
+				>
+					<!-- Image -->
+					<div
+						class="flex h-1/2 w-full shrink-0 items-center justify-center overflow-hidden"
+						style="background-color: color-mix(in srgb, {$formData.bg_color} 80%, #888)"
+					>
+						{#if previewImageSrc}
+							<img src={previewImageSrc} alt="preview" class="h-full w-full object-cover" />
+						{:else}
+							<UserRound class="h-16 w-16 opacity-30" />
+						{/if}
+					</div>
+					<!-- Content -->
+					<div class="flex w-full flex-col items-center gap-1 px-4 py-4 text-center">
+						<span
+							class="rounded-full px-2 py-0.5 text-xs font-semibold opacity-60"
+							style="border: 1px solid currentColor"
+						>
+							{$formData.category === 'human' ? 'Human' : 'Non-Human'}
 						</span>
-					{:else}
-						{editingCharacter ? 'Update Character' : 'Create Character'}
-					{/if}
-				</Button>
-			</Sheet.Footer>
+						<Tooltip.Provider>
+							<Tooltip.Root>
+								<Tooltip.Trigger class="w-full">
+									<h3 class="mt-1 line-clamp-1 w-full text-base leading-tight font-bold">
+										{$formData.name || 'Character name'}
+									</h3>
+								</Tooltip.Trigger>
+								<Tooltip.Content>{$formData.name || 'Character name'}</Tooltip.Content>
+							</Tooltip.Root>
+						</Tooltip.Provider>
+						<Tooltip.Provider>
+							<Tooltip.Root>
+								<Tooltip.Trigger class="w-full">
+									<p class="line-clamp-3 w-full text-xs leading-relaxed opacity-70">
+										{$formData.summary || 'Character summary...'}
+									</p>
+								</Tooltip.Trigger>
+								<Tooltip.Content class="max-w-xs"
+									>{$formData.summary || 'Character summary...'}</Tooltip.Content
+								>
+							</Tooltip.Root>
+						</Tooltip.Provider>
+					</div>
+				</div>
+				<Sheet.Footer class="flex flex-row justify-end gap-2">
+					<Button type="button" variant="outline" onclick={() => (isFormOpen = false)}
+						>Cancel</Button
+					>
+					<Button type="submit" disabled={$delayed}>
+						{#if $delayed}
+							<span class="flex items-center gap-2">
+								<Spinner />
+								Saving...
+							</span>
+						{:else}
+							{editingCharacter ? 'Update Character' : 'Create Character'}
+						{/if}
+					</Button>
+				</Sheet.Footer>
+			</div>
 		</form>
 	</Sheet.Content>
 </Sheet.Root>

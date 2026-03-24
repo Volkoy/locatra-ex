@@ -2,17 +2,17 @@
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Input } from '$lib/components/ui/input/index.js';
 	import { Textarea } from '$lib/components/ui/textarea/index.js';
-	import Label from './ui/label/label.svelte';
 	import * as Form from '$lib/components/ui/form/index.js';
-	import { Upload, X, Search, MapPin, Save, ArrowRight, ArrowLeft } from 'lucide-svelte';
-	import ValidationChecklist from './validation-checklist.svelte';
+	import { Search, Flag, Save, ArrowRight, ArrowLeft } from 'lucide-svelte';
+	import * as Tooltip from '$lib/components/ui/tooltip/index.js';
+	import ImageUpload from './image-upload.svelte';
 	import { MapLibre, MapEvents, Marker } from 'svelte-maplibre';
-	import type { LngLatBoundsLike, LngLat, MapMouseEvent } from 'maplibre-gl';
+	import type { MapMouseEvent } from 'maplibre-gl';
+	import { goto } from '$app/navigation';
 	import { superForm } from 'sveltekit-superforms';
 	import { generalInfoSchema } from '$lib/zod/schema';
 	import { zod4Client } from 'sveltekit-superforms/adapters';
 	import { onMount } from 'svelte';
-	import SuperDebug from 'sveltekit-superforms';
 	import { Spinner } from '$lib/components/ui/spinner/index.js';
 	import { toast } from 'svelte-sonner';
 
@@ -23,19 +23,16 @@
 		validators: zod4Client(generalInfoSchema),
 		dataType: 'json',
 		onResult: ({ result }) => {
-			if (result.type === 'success' && result.data?.message) {
-				toast.success(result.data.message);
+			if (result.type === 'success') {
+				goto(`/dashboard/games/${params.id}/edit/characters`);
 			} else if (result.type === 'failure' && result.data?.message) {
 				toast.error(result.data.message);
 			}
 		}
 	});
 
-	const { form: formData, errors, enhance, delayed, tainted } = form;
+	const { form: formData, enhance, delayed, tainted } = form;
 
-	let imagePreview = $state($formData.cover_image_url || '');
-	let imageFile = $state<File | null>(null);
-	let isUploadingImage = $state(false);
 	let center = $state<[number, number]>(
 		$formData.location?.lng && $formData.location?.lat
 			? [$formData.location.lng, $formData.location.lat]
@@ -46,62 +43,20 @@
 		lng: $formData.location?.lng ?? 0,
 		lat: $formData.location?.lat ?? 0
 	});
-	let isDragging = $state(false);
 	let queryLocation = $state('');
 	let lastRequestTime = 0;
 	const MIN_REQUEST_INTERVAL = 1000;
 	let isLoadingAddress = $state(false);
-	let imageTimestamp = $state(Date.now());
-	let isLoadingUserLocation = $state(false);
 	let searchResults = $state<Array<{ lat: string; lon: string; display_name: string }>>([]);
 	let showSearchResults = $state(false);
 	let locationAddress = $state('');
+	let searchContainerRef: HTMLDivElement | null = null;
 
 	let hasInitialLocation = $derived.by(() => {
 		const lat = $formData.location?.lat;
 		const lng = $formData.location?.lng;
 		return lat !== undefined && lng !== undefined && lat !== 0 && lng !== 0;
 	});
-
-	const validationChecks = $derived.by(
-		(): Array<{
-			label: string;
-			status: 'complete' | 'incomplete' | 'warning';
-			description: string;
-		}> => [
-			{
-				label: 'Game title',
-				status: ($formData.title && $formData.title.trim() !== '' ? 'complete' : 'incomplete') as
-					| 'complete'
-					| 'incomplete',
-				description: 'Required'
-			},
-			{
-				label: 'Description',
-				status: ($formData.description && $formData.description.trim() !== ''
-					? 'complete'
-					: 'incomplete') as 'complete' | 'incomplete',
-				description: 'Required'
-			},
-			{
-				label: 'Location',
-				status: (hasInitialLocation ? 'complete' : 'incomplete') as 'complete' | 'incomplete',
-				description: 'Required'
-			},
-			{
-				label: 'Cover image',
-				status: ($formData.cover_image_url ? 'complete' : 'warning') as 'complete' | 'warning',
-				description: 'Recommended'
-			},
-			{
-				label: 'At least one category',
-				status: ($formData.categories && $formData.categories.length > 0
-					? 'complete'
-					: 'warning') as 'complete' | 'warning',
-				description: 'Recommended'
-			}
-		]
-	);
 
 	const availableCategories = [
 		'History',
@@ -132,9 +87,22 @@
 			getUserLocation();
 		}
 
-		if ($formData.cover_image_url) {
-			imagePreview = `${$formData.cover_image_url}?t=${imageTimestamp}`;
-		}
+		// Add click outside handler to close search results
+		const handleClickOutside = (e: MouseEvent) => {
+			if (
+				showSearchResults &&
+				searchContainerRef &&
+				!searchContainerRef.contains(e.target as Node)
+			) {
+				showSearchResults = false;
+			}
+		};
+
+		document.addEventListener('click', handleClickOutside);
+
+		return () => {
+			document.removeEventListener('click', handleClickOutside);
+		};
 	});
 
 	async function getUserLocation() {
@@ -147,7 +115,6 @@
 		}
 
 		console.log('Requesting geolocation permission...');
-		isLoadingUserLocation = true;
 
 		navigator.geolocation.getCurrentPosition(
 			async (position) => {
@@ -157,8 +124,6 @@
 				// Only center the map, don't update form data or show marker
 				center = [lng, lat];
 				boundPos = { lng, lat };
-
-				isLoadingUserLocation = false;
 			},
 			(error) => {
 				console.error('Error getting user location:', error);
@@ -166,7 +131,6 @@
 				// Fallback to default location (Lisbon) - just center, don't save
 				center = [-9.1393, 38.7223];
 				boundPos = { lng: -9.1393, lat: 38.7223 };
-				isLoadingUserLocation = false;
 			},
 			{
 				enableHighAccuracy: true,
@@ -272,462 +236,243 @@
 		boundPos = { lng: lngLat.lng, lat: lngLat.lat };
 		reverseGeocode(boundPos.lat, boundPos.lng);
 	}
-
-	async function handleImageUpload(event: Event) {
-		const input = event.target as HTMLInputElement;
-		const file = input.files?.[0];
-
-		if (!file) return;
-
-		// Validate file type
-		if (!file.type.startsWith('image/')) {
-			alert('Please select an image file');
-			return;
-		}
-
-		// Validate file size (10MB)
-		if (file.size > 10 * 1024 * 1024) {
-			alert('Image must be less than 10MB');
-			return;
-		}
-
-		imageFile = file;
-
-		const oldImageUrl = $formData.cover_image_url;
-
-		// Show preview immediately
-		const reader = new FileReader();
-		reader.onload = (e) => {
-			imagePreview = e.target?.result as string;
-		};
-		reader.readAsDataURL(file);
-
-		// Upload to Supabase directly
-		await uploadImageToSupabase(file, oldImageUrl);
-	}
-
-	async function uploadImageToSupabase(file: File, oldImageUrl?: string | null) {
-		isUploadingImage = true;
-		try {
-			if (!session) {
-				alert('You must be logged in to upload images');
-				return;
-			}
-
-			// Generate file path - always use 'cover' as the base name to ensure only one image
-			const fileExt = file.name.split('.').pop();
-			const fileName = `cover.${fileExt}`;
-			const filePath = `${session.user.id}/${params.id}/${fileName}`;
-
-			// Delete old image if it exists and has a different extension
-			if (oldImageUrl && oldImageUrl.trim() !== '') {
-				try {
-					// Extract path from URL (remove query params first)
-					const urlWithoutParams = oldImageUrl.split('?')[0];
-					const url = new URL(urlWithoutParams);
-					const pathParts = url.pathname.split('/');
-					const oldPath = pathParts.slice(-3).join('/');
-
-					// Only delete if it's a different file (different extension)
-					if (oldPath !== filePath) {
-						console.log('Deleting old image:', oldPath);
-						const { error: deleteError } = await supabase.storage
-							.from('game-images')
-							.remove([oldPath]);
-
-						if (deleteError) {
-							console.warn('Could not delete old image:', deleteError);
-						} else {
-							console.log('Old image deleted successfully');
-						}
-					}
-				} catch (error) {
-					console.warn('Error deleting old image:', error);
-				}
-			}
-
-			// Upload new image (upsert will replace if same filename exists)
-			const { data: uploadData, error } = await supabase.storage
-				.from('game-images')
-				.upload(filePath, file, {
-					cacheControl: '3600',
-					upsert: true
-				});
-
-			if (error) {
-				console.error('Upload error:', error);
-				alert('Failed to upload image: ' + error.message);
-				return;
-			}
-
-			// Get public URL
-			const {
-				data: { publicUrl }
-			} = supabase.storage.from('game-images').getPublicUrl(filePath);
-
-			// Update form data with clean URL (no timestamp)
-			$formData.cover_image_url = publicUrl;
-
-			// Update timestamp to force reload
-			imageTimestamp = Date.now();
-			imagePreview = `${publicUrl}?t=${imageTimestamp}`;
-
-			console.log('New image uploaded successfully:', publicUrl);
-		} catch (error) {
-			console.error('Upload error:', error);
-			alert('Failed to upload image');
-		} finally {
-			isUploadingImage = false;
-		}
-	}
-
-	async function removeImage() {
-		if (isUploadingImage) return;
-
-		const oldImageUrl = $formData.cover_image_url;
-
-		// Delete from storage
-		if (oldImageUrl && oldImageUrl.trim() !== '') {
-			try {
-				// Remove query params before parsing
-				const urlWithoutParams = oldImageUrl.split('?')[0];
-				const url = new URL(urlWithoutParams);
-				const pathParts = url.pathname.split('/');
-				const oldPath = pathParts.slice(-3).join('/');
-
-				console.log('Removing image:', oldPath);
-				const { error } = await supabase.storage.from('game-images').remove([oldPath]);
-
-				if (error) {
-					console.error('Could not delete image:', error);
-					alert('Failed to delete image from storage');
-					return;
-				}
-
-				console.log('Image removed successfully');
-			} catch (error) {
-				console.error('Error deleting image:', error);
-			}
-		}
-
-		// Clear preview and form data
-		imagePreview = '';
-		imageFile = null;
-		$formData.cover_image_url = '';
-	}
 </script>
 
 <div class="mx-auto mb-2 w-full flex-1">
-	<div class="grid grid-cols-1 gap-2 lg:grid-cols-3">
-		<!-- Main Form -->
-		<div class="lg:col-span-2">
-			<div class="space-y-6 rounded-lg border border-gray-300 bg-white p-6">
-				<div class="mb-6">
-					<h2 class="text-2xl font-semibold">General Information</h2>
-					<p class="text-gray-600">
-						Fill out this form with some basic information about the game.
-					</p>
-				</div>
-				<form method="POST" use:enhance class="space-y-6">
-					<!-- Title -->
-					<Form.Field {form} name="title">
-						<Form.Control>
-							{#snippet children({ props })}
-								<Form.Label class="text-xl font-semibold">Title</Form.Label>
-								<Form.Description class="text-gray-500">Give your game a title.</Form.Description>
+	<div class="space-y-6 rounded-lg border border-gray-300 bg-white p-6">
+		<div class="mb-6">
+			<h2 class="text-2xl font-semibold">General Information</h2>
+			<p class="text-gray-600">Fill out this form with some basic information about the game.</p>
+		</div>
+		<form method="POST" use:enhance class="space-y-6">
+			<!-- Title -->
+			<Form.Field {form} name="title">
+				<Form.Control>
+					{#snippet children({ props })}
+						<Form.Label class="text-xl font-semibold">Title</Form.Label>
+						<Form.Description class="text-gray-500">Give your game a title.</Form.Description>
+						<Input
+							{...props}
+							type="text"
+							placeholder="Title"
+							bind:value={$formData.title}
+							autocomplete="off"
+						/>
+					{/snippet}
+				</Form.Control>
+				<Form.FieldErrors />
+			</Form.Field>
+
+			<!-- Description -->
+			<Form.Field {form} name="description">
+				<Form.Control>
+					{#snippet children({ props })}
+						<Form.Label class="text-xl font-semibold">Description</Form.Label>
+						<Form.Description class="text-gray-500">
+							Describe your game and what players can expect.
+						</Form.Description>
+						<Textarea
+							{...props}
+							class="flex min-h-[120px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+							placeholder="Description"
+							rows={4}
+							bind:value={$formData.description}
+						></Textarea>
+					{/snippet}
+				</Form.Control>
+				<Form.FieldErrors />
+			</Form.Field>
+
+			<!-- Location -->
+			<Form.Field {form} name="location">
+				<Form.Control>
+					{#snippet children({ props })}
+						<Form.Label class="text-xl font-semibold">Location</Form.Label>
+						<Form.Description class="text-gray-500">
+							Search or click on the map to set location of the game
+						</Form.Description>
+						<div class="relative" bind:this={searchContainerRef}>
+							<div class="flex">
 								<Input
 									{...props}
 									type="text"
-									placeholder="Title"
-									bind:value={$formData.title}
+									placeholder="Search location"
+									bind:value={queryLocation}
 									autocomplete="off"
+									onkeydown={(e) => {
+										if (e.key === 'Enter') {
+											e.preventDefault();
+											searchLocation(queryLocation);
+										}
+									}}
 								/>
-							{/snippet}
-						</Form.Control>
-						<Form.FieldErrors />
-					</Form.Field>
+								<Button
+									type="button"
+									variant="outline"
+									class="ml-2"
+									onclick={() => searchLocation(queryLocation)}
+									disabled={isLoadingAddress}
+								>
+									<Search />Search
+								</Button>
+							</div>
 
-					<!-- Description -->
-					<Form.Field {form} name="description">
-						<Form.Control>
-							{#snippet children({ props })}
-								<Form.Label class="text-xl font-semibold">Description</Form.Label>
-								<Form.Description class="text-gray-500">
-									Describe your game and what players can expect.
-								</Form.Description>
-								<Textarea
-									{...props}
-									class="flex min-h-[120px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50"
-									placeholder="Description"
-									rows={4}
-									bind:value={$formData.description}
-								></Textarea>
-							{/snippet}
-						</Form.Control>
-						<Form.FieldErrors />
-					</Form.Field>
-
-					<!-- Location -->
-					<Form.Field {form} name="location">
-						<Form.Control>
-							{#snippet children({ props })}
-								<Form.Label class="text-xl font-semibold">Location</Form.Label>
-								<Form.Description class="text-gray-500">
-									Search or click on the map to set location of the game
-								</Form.Description>
-								<div class="relative">
-									<div class="flex">
-										<Input
-											{...props}
-											type="text"
-											placeholder="Search location"
-											bind:value={queryLocation}
-											autocomplete="off"
-											onkeydown={(e) => {
-												if (e.key === 'Enter') {
-													e.preventDefault();
-													searchLocation(queryLocation);
-												}
-											}}
-										/>
-										<Button
-											type="button"
-											variant="outline"
-											class="ml-2"
-											onclick={() => searchLocation(queryLocation)}
-											disabled={isLoadingAddress}
-										>
-											<Search />Search
-										</Button>
-									</div>
-
-									<!-- Search Results Dropdown -->
-									{#if showSearchResults && searchResults.length > 0}
-										<div
-											class="absolute z-10 mt-1 max-h-60 w-full overflow-auto rounded-md border border-gray-300 bg-white shadow-lg"
-										>
-											{#each searchResults as result}
-												<button
-													type="button"
-													onclick={() => selectLocation(result)}
-													class="w-full cursor-pointer px-4 py-3 text-left hover:bg-gray-100 focus:bg-gray-100 focus:outline-none"
-												>
-													<p class="text-sm font-medium text-gray-900">{result.display_name}</p>
-												</button>
-											{/each}
-										</div>
-									{:else if showSearchResults && !isLoadingAddress && queryLocation && searchResults.length === 0}
-										<div
-											class="absolute z-10 mt-1 w-full rounded-md border border-gray-300 bg-white px-4 py-3 shadow-lg"
-										>
-											<p class="text-sm text-gray-500">No results found for "{queryLocation}"</p>
-										</div>
-									{/if}
-								</div>
-								<div class="space-y-2">
-									<!-- Map Container -->
-									<div class="relative h-[400px] w-full overflow-hidden rounded-lg border">
-										<MapLibre
-											style="https://basemaps.cartocdn.com/gl/positron-gl-style/style.json"
-											class="relative aspect-[9/16] max-h-[70vh] w-full sm:aspect-video sm:max-h-full"
-											standardControls
-											{center}
-											zoom={12}
-										>
-											<MapEvents onclick={setMarker} />
-											{#if showMarker}
-												<Marker
-													draggable
-													ondragstart={() => (isDragging = true)}
-													ondragend={() => (isDragging = false)}
-													bind:lngLat={boundPos}
-													class="place-items-center rounded-full bg-blue-500 p-1 focus:outline-2 focus:outline-black"
-													><MapPin color="white" size={20} /></Marker
-												>
-											{/if}
-										</MapLibre>
-										<div
-											class="absolute right-2 bottom-2 rounded bg-white/90 px-2 py-1 text-xs text-gray-600"
-										>
-											Geocoding by <a
-												href="https://nominatim.openstreetmap.org/"
-												target="_blank"
-												class="underline">Nominatim</a
-											>
-											| ©
-											<a
-												href="https://www.openstreetmap.org/copyright"
-												target="_blank"
-												class="underline">OpenStreetMap</a
-											> contributors
-										</div>
-									</div>
-
-									<div class="rounded-lg bg-gray-100 p-3 text-sm">
-										<p class="font-semibold text-gray-700">Selected Location</p>
-
-										{#if isLoadingAddress}
-											<div class="flex items-center gap-2 text-gray-600">
-												<Spinner />
-												<span>Loading address...</span>
-											</div>
-										{:else if hasInitialLocation}
-											<p class="text-xl text-gray-600">
-												{locationAddress || 'No address available'}
-											</p>
-											<p class="mt-1 text-sm text-gray-500">
-												Coordinates: {$formData.location?.lat?.toFixed(6)}, {$formData.location?.lng?.toFixed(
-													6
-												)}
-											</p>
-										{:else}
-											<p class="text-gray-600">No location selected.</p>
-										{/if}
-									</div>
-								</div>
-							{/snippet}
-						</Form.Control>
-						<Form.FieldErrors />
-					</Form.Field>
-
-					<!-- Cover Image -->
-					<Form.Field {form} name="cover_image_url">
-						<Form.Control>
-							{#snippet children({ props })}
-								<Form.Label class="text-xl font-semibold">Cover Image</Form.Label>
-								<Form.Description class="text-gray-500">
-									Upload a cover image for your game. Max 10MB.
-								</Form.Description>
-								{#if imagePreview}
-									<div class="relative">
-										<img
-											src={imagePreview}
-											alt="Cover preview"
-											class="aspect-video w-full rounded-lg object-cover"
-										/>
-										{#if isUploadingImage}
-											<div
-												class="absolute inset-0 flex items-center justify-center rounded-lg bg-black/50"
-											>
-												<svg
-													class="h-8 w-8 animate-spin text-white"
-													xmlns="http://www.w3.org/2000/svg"
-													fill="none"
-													viewBox="0 0 24 24"
-												>
-													<circle
-														class="opacity-25"
-														cx="12"
-														cy="12"
-														r="10"
-														stroke="currentColor"
-														stroke-width="4"
-													></circle>
-													<path
-														class="opacity-75"
-														fill="currentColor"
-														d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-													></path>
-												</svg>
-											</div>
-										{/if}
-										<Button
-											type="button"
-											variant="destructive"
-											size="icon"
-											class="absolute top-2 right-2"
-											onclick={removeImage}
-											disabled={isUploadingImage}
-										>
-											<X class="h-4 w-4" />
-										</Button>
-									</div>
-								{:else}
-									<Label
-										for="image"
-										class="flex aspect-video w-full cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed border-gray-300 transition hover:border-gray-400"
-									>
-										<Upload class="h-12 w-12 text-gray-400" />
-										<p class="mt-2 text-sm text-gray-600">Click to upload cover image</p>
-										<p class="text-xs text-gray-500">PNG, JPG up to 10MB</p>
-										<input
-											id="image"
-											type="file"
-											accept="image/*"
-											class="hidden"
-											onchange={handleImageUpload}
-											disabled={isUploadingImage}
-										/>
-									</Label>
-								{/if}
-								<input
-									type="hidden"
-									name="cover_image_url"
-									bind:value={$formData.cover_image_url}
-								/>
-							{/snippet}
-						</Form.Control>
-						<Form.FieldErrors />
-					</Form.Field>
-
-					<!-- Categories -->
-					<Form.Field {form} name="categories">
-						<Form.Control>
-							{#snippet children({ props })}
-								<Form.Label class="text-xl font-semibold">Categories</Form.Label>
-								<div class="flex flex-wrap gap-2">
-									{#each availableCategories as category}
+							<!-- Search Results Dropdown -->
+							{#if showSearchResults && searchResults.length > 0}
+								<div
+									class="absolute z-10 mt-1 max-h-60 w-full overflow-auto rounded-md border border-gray-300 bg-white shadow-lg"
+								>
+									{#each searchResults as result (result.display_name)}
 										<button
 											type="button"
-											onclick={() => toggleCategory(category)}
-											class="rounded-full px-4 py-2 text-sm font-medium transition hover:cursor-pointer"
-											class:bg-blue-600={$formData.categories.includes(category)}
-											class:text-white={$formData.categories.includes(category)}
-											class:hover:bg-blue-700={$formData.categories.includes(category)}
-											class:bg-gray-100={!$formData.categories.includes(category)}
-											class:text-gray-700={!$formData.categories.includes(category)}
-											class:hover:bg-gray-200={!$formData.categories.includes(category)}
+											onclick={() => selectLocation(result)}
+											class="w-full cursor-pointer px-4 py-3 text-left hover:bg-gray-100 focus:bg-gray-100 focus:outline-none"
 										>
-											{category}
+											<p class="text-sm font-medium text-gray-900">{result.display_name}</p>
 										</button>
 									{/each}
 								</div>
-							{/snippet}
-						</Form.Control>
-						<Form.FieldErrors />
-					</Form.Field>
-
-					<!-- Form Actions -->
-					<div class="mt-8 flex w-full justify-between gap-4">
-						<Button size="lg" variant="outline" href="/dashboard"><ArrowLeft /> Back</Button>
-						<div class="flex gap-4">
-							<Form.Button type="submit" size="lg" disabled={$delayed}>
-								{#if $delayed}
-									<span class="flex items-center gap-2">
-										<Spinner />
-										Saving...
-									</span>
-								{:else}
-									<Save /> Save information
-								{/if}
-							</Form.Button>
-							<Button
-								type="button"
-								size="lg"
-								href={`/dashboard/games/${params.id}/edit/characters`}
-								disabled={Object.keys($tainted || {}).length > 0 || $delayed}
-							>
-								Next <ArrowRight />
-							</Button>
+							{:else if showSearchResults && !isLoadingAddress && queryLocation && searchResults.length === 0}
+								<div
+									class="absolute z-10 mt-1 w-full rounded-md border border-gray-300 bg-white px-4 py-3 shadow-lg"
+								>
+									<p class="text-sm text-gray-500">No results found for "{queryLocation}"</p>
+								</div>
+							{/if}
 						</div>
-					</div>
-				</form>
-			</div>
-		</div>
+						<div class="space-y-2">
+							<!-- Map Container -->
+							<div class="relative w-full overflow-hidden rounded-lg border">
+								<MapLibre
+									style="https://tiles.openfreemap.org/styles/liberty"
+									class="relative h-[50vh] w-full"
+									standardControls
+									attributionControl={false}
+									{center}
+									zoom={12}
+								>
+									<MapEvents onclick={setMarker} />
+									{#if showMarker}
+										<Marker
+											draggable
+											bind:lngLat={boundPos}
+											ondragend={() => reverseGeocode(boundPos.lat, boundPos.lng)}
+										>
+											<Tooltip.Provider>
+												<Tooltip.Root>
+													<Tooltip.Trigger
+														class="flex h-9 w-9 cursor-pointer items-center justify-center rounded-full border-2 border-white bg-start-red shadow-lg"
+													>
+														<Flag strokeWidth={3} class="h-4 w-4 text-white" />
+													</Tooltip.Trigger>
+													<Tooltip.Content>Starting point</Tooltip.Content>
+												</Tooltip.Root>
+											</Tooltip.Provider>
+										</Marker>
+									{/if}
+								</MapLibre>
+							</div>
 
-		<!-- Validation Checklist Sidebar -->
-		<div class="lg:col-span-1">
-			<ValidationChecklist title="Validation Checklist" checks={validationChecks} />
-		</div>
+							<div class="rounded-lg bg-gray-100 p-3 text-sm">
+								<p class="font-semibold text-gray-700">Selected Location</p>
+
+								{#if isLoadingAddress}
+									<div class="flex items-center gap-2 text-gray-600">
+										<Spinner />
+										<span>Loading address...</span>
+									</div>
+								{:else if hasInitialLocation}
+									<p class="text-xl text-gray-600">
+										{locationAddress || 'No address available'}
+									</p>
+									<p class="mt-1 text-sm text-gray-500">
+										Coordinates: {$formData.location?.lat?.toFixed(6)}, {$formData.location?.lng?.toFixed(
+											6
+										)}
+									</p>
+								{:else}
+									<p class="text-gray-600">No location selected.</p>
+								{/if}
+							</div>
+						</div>
+					{/snippet}
+				</Form.Control>
+				<Form.FieldErrors />
+			</Form.Field>
+
+			<!-- Cover Image -->
+			<Form.Field {form} name="cover_image_url">
+				<Form.Control>
+					{#snippet children({ props })}
+						<Form.Label class="text-xl font-semibold">Cover Image</Form.Label>
+						<Form.Description class="text-gray-500">
+							Upload a cover image for your game (PNG, JPG, WEBP · max 50 MB — cropped to 16:9).
+						</Form.Description>
+						<ImageUpload
+							currentImageUrl={$formData.cover_image_url}
+							storagePath="{session.user.id}/{params.id}/cover"
+							{supabase}
+							onUploaded={(url) => {
+								$formData.cover_image_url = url;
+								$tainted = { ...$tainted, cover_image_url: true };
+							}}
+							onRemoved={() => {
+								$formData.cover_image_url = '';
+								$tainted = { ...$tainted, cover_image_url: true }; // Mark as tainted when removed
+							}}
+						/>
+						<input type="hidden" {...props} bind:value={$formData.cover_image_url} />
+					{/snippet}
+				</Form.Control>
+				<Form.FieldErrors />
+			</Form.Field>
+
+			<!-- Categories -->
+			<Form.Field {form} name="categories">
+				<Form.Control>
+					{#snippet children({ props })}
+						<Form.Label class="text-xl font-semibold">Categories</Form.Label>
+						<Form.Description class="text-gray-500"
+							>Select one or more categories that best describe your game.</Form.Description
+						>
+						<div class="flex flex-wrap gap-2">
+							{#each availableCategories as category (category)}
+								<Button
+									{...props}
+									type="button"
+									variant={$formData.categories.includes(category) ? 'default' : 'outline'}
+									onclick={() => toggleCategory(category)}
+								>
+									{category}
+								</Button>
+							{/each}
+						</div>
+					{/snippet}
+				</Form.Control>
+				<Form.FieldErrors />
+			</Form.Field>
+
+			<!-- Form Actions -->
+			<!-- Form Actions -->
+			<div class="mt-8 flex w-full justify-end gap-4">
+				<Button size="lg" variant="outline" href="/dashboard"><ArrowLeft /> Back</Button>
+				<div>
+					{#if Object.keys($tainted || {}).length}
+						<Form.Button type="submit" size="lg" disabled={$delayed}>
+							{#if $delayed}
+								<Spinner />
+								Saving...
+							{:else}
+								<Save /> Save Changes
+							{/if}
+						</Form.Button>
+					{:else}
+						<Button size="lg" href={`/dashboard/games/${params.id}/edit/characters`}>
+							Next <ArrowRight />
+						</Button>
+					{/if}
+				</div>
+			</div>
+		</form>
 	</div>
 </div>

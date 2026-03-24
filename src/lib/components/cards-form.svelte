@@ -6,14 +6,16 @@
 		Leaf,
 		BookOpen,
 		Eye,
-		Zap,
+		Footprints,
 		Landmark,
 		MapPin,
 		Trash2,
 		SquarePen,
 		ArrowRight,
 		ArrowLeft,
-		Globe
+		Globe,
+		CopyPlus,
+		ChevronDown
 	} from 'lucide-svelte';
 	import { Input } from '$lib/components/ui/input/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
@@ -26,13 +28,14 @@
 	import { Checkbox } from '$lib/components/ui/checkbox/index.js';
 	import { Textarea } from '$lib/components/ui/textarea/index.js';
 	import * as Empty from '$lib/components/ui/empty/index.js';
-	import ValidationChecklist from './validation-checklist.svelte';
 	import { superForm } from 'sveltekit-superforms';
+	import type { Database } from '$lib/database.types';
+
+	type Card = Database['public']['Tables']['cards']['Row'];
 	import { cardSchema } from '$lib/zod/schema';
 	import { zod4Client } from 'sveltekit-superforms/adapters';
 	import { invalidateAll } from '$app/navigation';
 	import { toast } from 'svelte-sonner';
-	import SuperDebug from 'sveltekit-superforms';
 
 	let { data, params } = $props();
 
@@ -45,12 +48,12 @@
 	];
 
 	const allJourneySteps = [
-		{ value: 'call_to_adventure', label: 'Call to Adventure' },
-		{ value: 'crossing_the_threshold', label: 'Crossing the Threshold' },
-		{ value: 'meeting_the_mentor', label: 'Meeting the Mentor' },
-		{ value: 'trials_and_growth', label: 'Trials and Growth' },
-		{ value: 'death_and_transformation', label: 'Death and Transformation' },
-		{ value: 'change_and_return', label: 'Change and Return' }
+		{ value: 'call_to_adventure', label: 'Call to Adventure', description: 'The player is invited into the story world and begins to sense that something extraordinary awaits.' },
+		{ value: 'crossing_the_threshold', label: 'Crossing the Threshold', description: 'The player commits to the journey, leaving the familiar behind and entering unknown territory.' },
+		{ value: 'meeting_the_mentor', label: 'Meeting the Mentor', description: 'The player encounters guidance — a person, place, or discovery — that equips them for challenges ahead.' },
+		{ value: 'trials_and_growth', label: 'Trials and Growth', description: 'The player faces obstacles and setbacks that test their resolve and push them to grow.' },
+		{ value: 'death_and_transformation', label: 'Death and Transformation', description: 'A moment of crisis or deep change — the player must let go of something old to become something new.' },
+		{ value: 'change_and_return', label: 'Change and Return', description: 'The player returns transformed, carrying new wisdom and a changed perspective on the world.' }
 	];
 
 	const characterTypes = [
@@ -62,10 +65,10 @@
 	let cards = $derived(data.cards || []);
 	let pois = $derived(data.pois || []);
 	let isFormOpen = $state(false);
-	let editingCard = $state<any | null>(null);
+	let editingCard = $state<Card | null>(null);
 	let isGeneratingAI = $state(false);
 	let searchQuery = $state('');
-	let sortBy = $state<'title' | 'type' | 'hero_steps'>('title');
+	let sortBy = $state<'title' | 'type' | 'hero_steps' | 'created_at'>('created_at');
 
 	const form = superForm(data.form, {
 		validators: zod4Client(cardSchema),
@@ -82,138 +85,27 @@
 		}
 	});
 
-	const { form: formData, errors, enhance, delayed } = form;
+	const { form: formData, enhance, delayed } = form;
 
 	let filteredCards = $derived.by(() => {
 		let filtered = cards.filter(
-			(card) =>
-				card.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-				card.prompt.toLowerCase().includes(searchQuery.toLowerCase())
+			(card: Card) =>
+				(card.title ?? '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+				(card.prompt ?? '').toLowerCase().includes(searchQuery.toLowerCase())
 		);
 
-		return filtered.sort((a, b) => {
+		return filtered.sort((a: Card, b: Card) => {
 			if (sortBy === 'title') {
-				return a.title.localeCompare(b.title);
+				return (a.title ?? '').localeCompare(b.title ?? '');
 			} else if (sortBy === 'type') {
 				return a.type.localeCompare(b.type);
+			} else if (sortBy === 'created_at') {
+				return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
 			} else {
 				return (a.hero_steps[0] || '').localeCompare(b.hero_steps[0] || '');
 			}
 		});
 	});
-
-	const MIN_CARDS = 10;
-	const MIN_GENERAL_CARDS = 5;
-	const MIN_CARD_TYPES = 3;
-	const ALL_HERO_STEPS = 6;
-	const MIN_CARDS_PER_STEP = 2;
-
-	const validationChecks = $derived.by(
-		(): Array<{
-			label: string;
-			status: 'complete' | 'incomplete' | 'warning';
-			description: string;
-		}> => {
-			const generalCards = cards.filter(
-				(c: any) => c.card_category === 'general' || !c.poi_id
-			).length;
-			const cardTypes = new Set(cards.map((c: any) => c.type));
-			const allSteps = new Set();
-			const stepCounts: Record<string, number> = {};
-
-			cards.forEach((card: any) => {
-				card.hero_steps?.forEach((step: string) => {
-					allSteps.add(step);
-					stepCounts[step] = (stepCounts[step] || 0) + 1;
-				});
-			});
-
-			const missingSteps = ALL_HERO_STEPS - allSteps.size;
-			const stepsWithFewCards = Object.entries(stepCounts).filter(
-				([_, count]) => (count as number) < MIN_CARDS_PER_STEP
-			).length;
-
-			const poisWithCards = new Set(cards.filter((c: any) => c.poi_id).map((c: any) => c.poi_id))
-				.size;
-			const poisWithoutCards = pois.length - poisWithCards;
-			const generalRatio = cards.length > 0 ? generalCards / cards.length : 0;
-
-			return [
-				{
-					label: `At least ${MIN_CARDS} cards`,
-					status: (cards.length >= MIN_CARDS ? 'complete' : 'incomplete') as
-						| 'complete'
-						| 'incomplete',
-					description: `Required (${cards.length} created)`
-				},
-				{
-					label: `At least ${MIN_GENERAL_CARDS} general cards`,
-					status: (generalCards >= MIN_GENERAL_CARDS
-						? 'complete'
-						: generalCards > 0
-							? 'warning'
-							: 'incomplete') as 'complete' | 'incomplete' | 'warning',
-					description: `Recommended (${generalCards} created)`
-				},
-				{
-					label: `At least ${MIN_CARD_TYPES} card types`,
-					status: (cardTypes.size >= MIN_CARD_TYPES
-						? 'complete'
-						: cardTypes.size > 0
-							? 'warning'
-							: 'incomplete') as 'complete' | 'incomplete' | 'warning',
-					description: `${cardTypes.size} types used`
-				},
-				{
-					label: "All 6 hero's journey steps",
-					status: (allSteps.size === ALL_HERO_STEPS ? 'complete' : 'incomplete') as
-						| 'complete'
-						| 'incomplete',
-					description: `Required (${allSteps.size}/${ALL_HERO_STEPS} covered)`
-				},
-				{
-					label: 'Each step has 2+ cards',
-					status: (allSteps.size === ALL_HERO_STEPS && stepsWithFewCards === 0
-						? 'complete'
-						: allSteps.size === ALL_HERO_STEPS
-							? 'warning'
-							: 'incomplete') as 'complete' | 'incomplete' | 'warning',
-					description:
-						stepsWithFewCards > 0
-							? `${stepsWithFewCards} steps need more cards`
-							: 'Well distributed'
-				},
-				{
-					label: 'Card distribution balance',
-					status: (cards.length >= MIN_CARDS && generalRatio >= 0.2 && generalRatio <= 0.8
-						? 'complete'
-						: cards.length >= MIN_CARDS
-							? 'warning'
-							: 'incomplete') as 'complete' | 'incomplete' | 'warning',
-					description:
-						generalRatio > 0.8
-							? 'Too many general cards'
-							: generalRatio < 0.2
-								? 'Too many POI-specific cards'
-								: 'Balanced'
-				},
-				{
-					label: 'POI card coverage',
-					status: (cards.length === 0
-						? 'incomplete'
-						: pois.length > 0 && poisWithoutCards <= pois.length * 0.5
-							? 'complete'
-							: 'warning') as 'complete' | 'warning' | 'incomplete',
-					description:
-						cards.length === 0
-							? 'No cards created yet'
-							: poisWithoutCards > 0
-								? `${poisWithoutCards} POI${poisWithoutCards > 1 ? 's' : ''} without cards`
-								: 'All POIs have cards'
-				}
-			];
-		}
-	);
 
 	const openCreateForm = () => {
 		editingCard = null;
@@ -229,7 +121,7 @@
 		isFormOpen = true;
 	};
 
-	const openEditForm = (card: any) => {
+	const openEditForm = (card: Card) => {
 		editingCard = card;
 		$formData.id = card.id;
 		$formData.title = card.title;
@@ -272,13 +164,14 @@
 					keywords: $formData.keywords,
 					poiId: $formData.poi_id,
 					existingTitle: $formData.title || null,
-					existingPrompt: $formData.prompt || null
+					existingPrompt: $formData.prompt || null,
+					gameId: data.gameId ?? null
 				})
 			});
 
 			if (!response.ok) throw new Error('Failed to generate content');
 
-			const { title, prompt } = await response.json();
+			const { title, prompt } = (await response.json()) as { title: string; prompt: string };
 			$formData.title = title;
 			$formData.prompt = prompt;
 			toast.success('Content generated!');
@@ -309,6 +202,71 @@
 		}
 	}
 
+	const getCardHeaderBg = (type: string) => {
+		switch (type) {
+			case 'nature':
+				return 'bg-nature-green';
+			case 'history':
+				return 'bg-history-yellow';
+			case 'sense':
+				return 'bg-purple-600';
+			case 'action':
+				return 'bg-sense-red';
+			case 'landmark':
+				return 'bg-landmark-green';
+			default:
+				return 'bg-gray-600';
+		}
+	};
+
+	const getCardPaleBg = (type: string) => {
+		switch (type) {
+			case 'nature':
+				return 'bg-nature-green/10';
+			case 'history':
+				return 'bg-history-yellow/10';
+			case 'sense':
+				return 'bg-purple-600/10';
+			case 'action':
+				return 'bg-sense-red/10';
+			case 'landmark':
+				return 'bg-landmark-green/10';
+			default:
+				return 'bg-gray-100';
+		}
+	};
+
+	const getCardTextColor = (type: string) => {
+		switch (type) {
+			case 'nature':
+				return 'text-nature-green';
+			case 'history':
+				return 'text-history-yellow';
+			case 'sense':
+				return 'text-purple-600';
+			case 'action':
+				return 'text-sense-red';
+			case 'landmark':
+				return 'text-landmark-green';
+			default:
+				return 'text-gray-700';
+		}
+	};
+
+	let expandedCards = $state<Record<number, boolean>>({});
+
+	async function duplicateCard(id: number) {
+		const fd = new FormData();
+		fd.append('cardId', id.toString());
+		const res = await fetch('?/duplicate', { method: 'POST', body: fd });
+		if (res.ok) {
+			toast.success('Card duplicated!');
+			await invalidateAll();
+		} else {
+			toast.error('Failed to duplicate card');
+		}
+	}
+
 	const getCardIcon = (type: string) => {
 		switch (type) {
 			case 'nature':
@@ -318,7 +276,7 @@
 			case 'sense':
 				return Eye;
 			case 'action':
-				return Zap;
+				return Footprints;
 			case 'landmark':
 				return Landmark;
 			default:
@@ -326,224 +284,208 @@
 		}
 	};
 
-	const getCardGradient = (type: string) => {
-		switch (type) {
-			case 'nature':
-				return 'from-green-50 to-emerald-50';
-			case 'history':
-				return 'from-amber-50 to-yellow-50';
-			case 'sense':
-				return 'from-purple-50 to-pink-50';
-			case 'action':
-				return 'from-orange-50 to-red-50';
-			case 'landmark':
-				return 'from-blue-50 to-indigo-50';
-			default:
-				return 'from-gray-50 to-slate-50';
-		}
-	};
-
 	const getJourneyStepLabel = (step: string) => {
 		return allJourneySteps.find((s) => s.value === step)?.label || step;
 	};
+
+	function selectAllSteps() {
+		$formData.hero_steps = allJourneySteps.map((s) => s.value);
+	}
+
+	function deselectAllSteps() {
+		$formData.hero_steps = [];
+	}
 
 	function addStep(value: string) {
 		$formData.hero_steps = [...$formData.hero_steps, value];
 	}
 
 	function removeStep(value: string) {
-		$formData.hero_steps = $formData.hero_steps.filter((i) => i !== value);
+		$formData.hero_steps = $formData.hero_steps.filter((i: string) => i !== value);
 	}
 </script>
 
 <div class="mx-auto w-full flex-1">
-	<div class="grid grid-cols-1 gap-2 lg:grid-cols-3">
-		<!-- Main Content -->
-		<div class="lg:col-span-2">
-			<div class="space-y-6 rounded-lg border border-gray-300 bg-white p-6">
-				<div class="mb-6">
-					<h2 class="text-2xl font-semibold">Card Prompts</h2>
-					<p class="text-gray-600">
-						Cards guide your players' stories by presenting challenges, reflections, and prompts
-						that help them write meaningful story segments. Each card shapes their journey and
-						inspires the narrative fragments they create.
-					</p>
-				</div>
-
-				{#if cards.length === 0}
-					<Empty.Root>
-						<Empty.Header>
-							<Empty.Media variant="icon">
-								<BookDashed />
-							</Empty.Media>
-							<Empty.Title>No Cards Yet</Empty.Title>
-							<Empty.Description>
-								Create your first card prompt to guide players through their journey.
-							</Empty.Description>
-						</Empty.Header>
-						<Empty.Content>
-							<Button onclick={openCreateForm}>
-								<Plus class="mr-2 h-4 w-4" />
-								Create Card
-							</Button>
-						</Empty.Content>
-					</Empty.Root>
-				{:else}
-					<div class="flex gap-4">
-						<Field.Field class="max-w-[320px]">
-							<Field.Label for="search">Search Cards</Field.Label>
-							<Input
-								id="search"
-								type="text"
-								placeholder="Search by name or summary..."
-								bind:value={searchQuery}
-							/>
-						</Field.Field>
-						<Field.Field orientation="responsive" class="max-w-[180px]">
-							<Field.Label for="sort">Sort By</Field.Label>
-							<Select.Root type="single" bind:value={sortBy}>
-								<Select.Trigger id="sort">
-									{sortBy === 'title' ? 'Title' : sortBy === 'type' ? 'Type' : 'Journey Step'}
-								</Select.Trigger>
-								<Select.Content>
-									<Select.Item value="title">Title</Select.Item>
-									<Select.Item value="type">Type</Select.Item>
-									<Select.Item value="hero_steps">Journey Step</Select.Item>
-								</Select.Content>
-							</Select.Root>
-						</Field.Field>
-					</div>
-
-					<!-- Cards Grid -->
-					<div class="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3">
-						<button
-							onclick={openCreateForm}
-							class="group flex min-h-[280px] flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed border-gray-300 p-6 transition-colors hover:cursor-pointer hover:border-primary hover:bg-gray-50 sm:aspect-[3/4]"
-						>
-							<div
-								class="flex h-16 w-16 items-center justify-center rounded-full bg-gray-100 transition-colors group-hover:bg-primary/10"
-							>
-								<Plus class="h-8 w-8 text-gray-400 transition-colors group-hover:text-primary" />
-							</div>
-							<span
-								class="text-base font-medium text-gray-600 transition-colors group-hover:text-primary sm:text-lg"
-								>Create New Card</span
-							>
-						</button>
-
-						{#each filteredCards as card (card.id)}
-							{@const Icon = getCardIcon(card.type)}
-							<div
-								class="relative flex min-h-[280px] flex-col overflow-hidden rounded-xl border border-gray-200 bg-gradient-to-br sm:aspect-[3/4] {getCardGradient(
-									card.type
-								)}"
-							>
-								<!-- Background Icon -->
-								<div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 opacity-5">
-									<Icon class="h-32 w-32" strokeWidth={1.5} />
-								</div>
-
-								<!-- Card Content -->
-								<div class="relative z-10 flex flex-1 flex-col p-3 sm:p-4">
-									<!-- Badges -->
-									<div class="mb-3 flex flex-wrap gap-1.5 sm:gap-2">
-										<span
-											class="rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-gray-700 capitalize sm:px-3 sm:py-1.5"
-										>
-											{card.type}
-										</span>
-										<span
-											class="rounded-full bg-purple-100 px-2.5 py-1 text-xs font-semibold text-purple-700 sm:px-3 sm:py-1.5"
-										>
-											{characterTypes.find((t) => t.value === card.character_category)?.label ||
-												card.character_category}
-										</span>
-										{#if card.card_category === 'poi_specific'}
-											<span
-												class="flex items-center gap-1 rounded-full bg-green-100 px-2.5 py-1 text-xs font-semibold text-green-700 sm:px-3 sm:py-1.5"
-											>
-												<MapPin class="h-3 w-3" />
-												POI
-											</span>
-										{:else}
-											<span
-												class="flex items-center gap-1 rounded-full bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-700 sm:px-3 sm:py-1.5"
-											>
-												<Globe class="h-3 w-3" />General
-											</span>
-										{/if}
-									</div>
-
-									<!-- Card Title -->
-									<h3
-										class="mb-2 line-clamp-2 text-base leading-tight font-bold text-gray-900 sm:mb-3 sm:text-lg"
-									>
-										{card.title}
-									</h3>
-
-									<!-- Card Prompt -->
-									<p class="line-clamp-3 flex-1 text-xs leading-relaxed text-gray-600 sm:text-sm">
-										{card.prompt}
-									</p>
-
-									<!-- Journey Steps -->
-									<div class="mb-3 flex flex-wrap gap-1 sm:mb-4">
-										{#each card.hero_steps.slice(0, 2) as step}
-											<span
-												class="rounded-full bg-indigo-100 px-2 py-1 text-xs font-medium text-indigo-700"
-											>
-												{getJourneyStepLabel(step)}
-											</span>
-										{/each}
-										{#if card.hero_steps.length > 2}
-											<span
-												class="rounded-full bg-indigo-100 px-2 py-1 text-xs font-medium text-indigo-700"
-											>
-												+{card.hero_steps.length - 2}
-											</span>
-										{/if}
-									</div>
-
-									<!-- Action Buttons -->
-									<div class="flex gap-2">
-										<Button
-											variant="outline"
-											size="sm"
-											class="min-h-[40px] flex-1 text-red-600 hover:border-red-300 hover:bg-red-50 hover:text-red-700"
-											onclick={() => deleteCard(card.id)}
-										>
-											<Trash2 class="h-4 w-4" />
-										</Button>
-										<Button
-											variant="default"
-											size="sm"
-											class="min-h-[40px] flex-[2]"
-											onclick={() => openEditForm(card)}
-										>
-											<SquarePen class="mr-1.5 h-4 w-4" />
-											Edit
-										</Button>
-									</div>
-								</div>
-							</div>
-						{/each}
-					</div>
-				{/if}
-
-				<div class="mt-8 flex w-full justify-end gap-4">
-					<Button variant="outline" size="lg" href={`/dashboard/games/${params.id}/edit/pois`}>
-						<ArrowLeft /> Back
-					</Button>
-					<Button size="lg" href={`/dashboard/games/${params.id}/edit/ai`}>
-						Next <ArrowRight />
-					</Button>
-				</div>
-			</div>
+	<div class="space-y-6 rounded-lg border border-gray-300 bg-white p-6">
+		<div class="mb-6">
+			<h2 class="text-2xl font-semibold">Card Prompts</h2>
+			<p class="text-gray-600">
+				Cards guide your players' stories by presenting challenges, reflections, and prompts that
+				help them write meaningful story segments. Each card shapes their journey and inspires the
+				narrative fragments they create.
+			</p>
 		</div>
 
-		<!-- Validation Checklist Sidebar -->
-		<div class="lg:col-span-1">
-			<ValidationChecklist title="Validation Checklist" checks={validationChecks} />
+		{#if cards.length === 0}
+			<Empty.Root>
+				<Empty.Header>
+					<Empty.Media variant="icon">
+						<BookDashed />
+					</Empty.Media>
+					<Empty.Title>No Cards Yet</Empty.Title>
+					<Empty.Description>
+						Create your first card prompt to guide players through their journey.
+					</Empty.Description>
+				</Empty.Header>
+				<Empty.Content>
+					<Button onclick={openCreateForm}>
+						<Plus class="mr-2 h-4 w-4" />
+						Create Card
+					</Button>
+				</Empty.Content>
+			</Empty.Root>
+		{:else}
+			<div class="flex gap-4">
+				<Field.Field class="max-w-[320px]">
+					<Field.Label for="search">Search Cards</Field.Label>
+					<Input
+						id="search"
+						type="text"
+						placeholder="Search by name or summary..."
+						bind:value={searchQuery}
+					/>
+				</Field.Field>
+				<Field.Field orientation="responsive" class="max-w-[180px]">
+					<Field.Label for="sort">Sort By</Field.Label>
+					<Select.Root type="single" bind:value={sortBy}>
+						<Select.Trigger id="sort">
+							{sortBy === 'title'
+								? 'Title'
+								: sortBy === 'type'
+									? 'Type'
+									: sortBy === 'created_at'
+										? 'Most Recent'
+										: 'Journey Step'}
+						</Select.Trigger>
+						<Select.Content>
+							<Select.Item value="created_at">Most Recent</Select.Item>
+							<Select.Item value="title">Title</Select.Item>
+							<Select.Item value="type">Type</Select.Item>
+							<Select.Item value="hero_steps">Journey Step</Select.Item>
+						</Select.Content>
+					</Select.Root>
+				</Field.Field>
+			</div>
+
+			<!-- Cards Grid -->
+			<div class="flex flex-wrap gap-5">
+				<!-- Create new card button -->
+				<div class="flex w-72 flex-col gap-2">
+					<button
+						onclick={openCreateForm}
+						class="group flex aspect-[2/3] flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed border-gray-300 p-4 transition-colors hover:cursor-pointer hover:border-primary hover:bg-gray-50"
+					>
+						<div
+							class="flex h-12 w-12 items-center justify-center rounded-full bg-gray-100 transition-colors group-hover:bg-primary/10"
+						>
+							<Plus class="h-6 w-6 text-gray-400 transition-colors group-hover:text-primary" />
+						</div>
+						<span
+							class="text-center text-sm font-medium text-gray-600 transition-colors group-hover:text-primary"
+							>Create New Card</span
+						>
+					</button>
+				</div>
+
+				{#each filteredCards as card (card.id)}
+					{@const Icon = getCardIcon(card.type)}
+					{@const headerBg = getCardHeaderBg(card.type)}
+					{@const paleBg = getCardPaleBg(card.type)}
+					{@const textColor = getCardTextColor(card.type)}
+					<div class="flex w-72 flex-col gap-2">
+						<!-- Portrait card -->
+						<div
+							class="flex aspect-[2/3] flex-col overflow-hidden rounded-xl border-8 border-white shadow-md outline outline-2 outline-gray-200 transition-shadow hover:shadow-xl"
+						>
+							<!-- Colored header -->
+							<div class="flex flex-col items-center gap-2 p-4 {paleBg}">
+								<div class="flex h-14 w-14 items-center justify-center rounded-full {headerBg}">
+									<Icon class="h-8 w-8 text-white" />
+								</div>
+								<h3 class="line-clamp-3 text-center text-sm leading-tight font-bold {textColor}">
+									{card.title}
+								</h3>
+							</div>
+							<!-- White body -->
+							<div class="flex-1 bg-white p-4 pt-8">
+								<p class="line-clamp-[8] text-center text-sm leading-relaxed text-black">
+									{card.prompt}
+								</p>
+							</div>
+						</div>
+
+						<!-- Action buttons -->
+						<div class="grid grid-cols-3 gap-1">
+							<Button size="sm" class="flex-1" onclick={() => openEditForm(card)}>
+								<SquarePen class="h-3.5 w-3.5" />
+							</Button>
+							<Button size="sm" variant="outline" onclick={() => duplicateCard(card.id)}>
+								<CopyPlus class="h-3.5 w-3.5" />
+							</Button>
+							<Button size="sm" variant="destructive" onclick={() => deleteCard(card.id)}>
+								<Trash2 class="h-3.5 w-3.5" />
+							</Button>
+						</div>
+
+						<!-- Metadata badges (collapsible) -->
+						<button
+							class="flex flex-wrap items-center gap-1"
+							onclick={() => (expandedCards[card.id] = !expandedCards[card.id])}
+						>
+							<span
+								class="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-700 uppercase"
+							>
+								{card.type}
+							</span>
+							<span
+								class="rounded-full bg-purple-100 px-2 py-0.5 text-xs font-medium text-purple-700 uppercase"
+							>
+								{characterTypes.find((t) => t.value === card.character_category)?.label ??
+									card.character_category}
+							</span>
+							{#if card.card_category === 'poi_specific'}
+								<span
+									class="flex items-center gap-0.5 rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700 uppercase"
+								>
+									<MapPin class="h-2.5 w-2.5" />POI
+								</span>
+							{:else}
+								<span
+									class="flex items-center gap-0.5 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700 uppercase"
+								>
+									<Globe class="h-2.5 w-2.5" />General
+								</span>
+							{/if}
+							<ChevronDown
+								class="ml-auto h-3 w-3 text-gray-400 transition-transform {expandedCards[card.id]
+									? 'rotate-180'
+									: ''}"
+							/>
+						</button>
+
+						{#if expandedCards[card.id]}
+							<div class="flex flex-wrap gap-1">
+								{#each card.hero_steps as step (step)}
+									<span
+										class="rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-medium text-indigo-700"
+									>
+										{getJourneyStepLabel(step)}
+									</span>
+								{/each}
+							</div>
+						{/if}
+					</div>
+				{/each}
+			</div>
+		{/if}
+
+		<div class="mt-8 flex w-full justify-end gap-4">
+			<Button variant="outline" size="lg" href={`/dashboard/games/${params.id}/edit/pois`}>
+				<ArrowLeft /> Back
+			</Button>
+			<Button size="lg" href={`/dashboard/games/${params.id}/edit/ai`}>
+				Next <ArrowRight />
+			</Button>
 		</div>
 	</div>
 </div>
@@ -608,7 +550,7 @@
 										<Select.Root type="single" bind:value={$formData.poi_id}>
 											<Select.Trigger {...props} class="w-full">
 												{$formData.poi_id
-													? pois.find((p) => p.id === $formData.poi_id)?.name
+													? pois.find((p: { id: number; name: string }) => p.id === $formData.poi_id)?.name
 													: 'Select a POI'}
 											</Select.Trigger>
 											<Select.Content>
@@ -675,7 +617,7 @@
 										: 'Select character type'}
 								</Select.Trigger>
 								<Select.Content>
-									{#each characterTypes as type}
+									{#each characterTypes as type (type.value)}
 										<Select.Item value={type.value}>{type.label}</Select.Item>
 									{/each}
 								</Select.Content>
@@ -693,15 +635,26 @@
 						multiple steps makes the card appear across different moments in their journey.</Form.Description
 					>
 					<div class="space-y-3 rounded-lg border border-gray-200 bg-white p-4">
+						<div class="flex items-center justify-between border-b border-gray-100 pb-2">
+							<span class="text-xs text-gray-500">{$formData.hero_steps?.length ?? 0}/{allJourneySteps.length} selected</span>
+							<button
+								type="button"
+								class="text-xs font-medium text-primary hover:underline"
+								onclick={$formData.hero_steps?.length === allJourneySteps.length ? deselectAllSteps : selectAllSteps}
+							>
+								{$formData.hero_steps?.length === allJourneySteps.length ? 'Deselect All' : 'Select All'}
+							</button>
+						</div>
 						{#each allJourneySteps as step (step.value)}
 							{@const checked = $formData.hero_steps?.includes(step.value)}
-							<div class="flex items-center space-x-2">
+							<div class="flex items-start space-x-2">
 								<Form.Control>
 									{#snippet children({ props })}
 										<Checkbox
 											{...props}
 											value={step.value}
 											{checked}
+											class="mt-0.5"
 											onCheckedChange={(v) => {
 												if (v) {
 													addStep(step.value);
@@ -710,12 +663,15 @@
 												}
 											}}
 										/>
-										<Form.Label
-											for={`step-${step.value}`}
-											class="cursor-pointer text-sm font-medium"
-										>
-											{step.label}
-										</Form.Label>
+										<div class="flex flex-col gap-0.5">
+											<Form.Label
+												for={`step-${step.value}`}
+												class="cursor-pointer text-sm font-medium"
+											>
+												{step.label}
+											</Form.Label>
+											<p class="text-xs leading-snug text-gray-500">{step.description}</p>
+										</div>
 									{/snippet}
 								</Form.Control>
 							</div>

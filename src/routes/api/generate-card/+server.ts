@@ -1,116 +1,140 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { GoogleGenAI  } from '@google/genai';
-import { GEMINI_API_KEY } from '$env/static/private';
+import Groq from 'groq-sdk';
+import { GROQ_API_KEY } from '$env/static/private';
 import { z } from 'zod';
 
-const ai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
+const groq = new Groq({ apiKey: GROQ_API_KEY });
 
 const journeyStepDescriptions: Record<string, string> = {
-    call_to_adventure: "An event or challenge that disrupts the ordinary world and invites the hero to embark on a journey.",
-    crossing_threshold: "The hero commits to the adventure and enters the special world, leaving the familiar behind.",
-    meeting_mentor: "The hero encounters a wise figure who provides guidance, training, or magical gifts for the journey ahead.",
-    trials_and_growth: "The hero faces challenges, makes friends, identifies foes, and grows through experiences while learning the rules of the special world.",
-    death_and_transformation: "The hero faces their greatest fear or most difficult challenge, often a life-or-death moment that leads to profound transformation or rebirth.",
-    change_and_return: "The hero returns to the ordinary world transformed, bringing newfound wisdom, treasure, or the power to help others."
+	call_to_adventure:
+		'An event or challenge that disrupts the ordinary world and invites the hero to embark on a journey.',
+	crossing_threshold:
+		'The hero commits to the adventure and enters the special world, leaving the familiar behind.',
+	meeting_mentor:
+		'The hero encounters a wise figure who provides guidance, training, or magical gifts for the journey ahead.',
+	trials_and_growth:
+		'The hero faces challenges, makes friends, identifies foes, and grows through experiences while learning the rules of the special world.',
+	death_and_transformation:
+		'The hero faces their greatest fear or most difficult challenge, often a life-or-death moment that leads to profound transformation or rebirth.',
+	change_and_return:
+		'The hero returns to the ordinary world transformed, bringing newfound wisdom, treasure, or the power to help others.'
 };
 
-export const POST: RequestHandler = async ({ request, locals: { safeGetSession, supabase } }) => {
-    const { session } = await safeGetSession();
-    
-    if (!session) {
-        return json({ error: 'Unauthorized' }, { status: 401 });
-    }
+export const POST: RequestHandler = async ({ request, locals: { getSession, supabase } }) => {
+	const session = await getSession();
 
-    try {
-        console.log('Generating AI content...');
-        console.log('Request body:', await request.clone().text());
-        const { type, journeySteps, characterType, cardCategory, keywords, poiId, existingTitle, existingPrompt } = await request.json();
+	if (!session) {
+		return json({ error: 'Unauthorized' }, { status: 401 });
+	}
 
-        const journeyStepDetails = journeySteps.map((step: string) => {
-            const name = step.replace(/_/g, ' ').replace(/\b\w/g, (l: string) => l.toUpperCase());
-            const description = journeyStepDescriptions[step] || '';
-            return `${name}: ${description}`;
-        }).join('\n');
+	try {
+		const {
+			type,
+			journeySteps,
+			characterType,
+			cardCategory,
+			keywords,
+			poiId,
+			existingTitle,
+			existingPrompt,
+			gameId
+		} = await request.json();
 
-        const characterTypeText = characterType === 'both' 
-            ? 'all characters' 
-            : characterType === 'human' 
-            ? 'human characters only' 
-            : 'non-human characters only';
-        
-        const promptSchema = z.object({
-            title: z.string().max(50),
-            prompt: z.string().max(300)
-        });
+		const journeyStepDetails = journeySteps
+			.map((step: string) => {
+				const name = step.replace(/_/g, ' ').replace(/\b\w/g, (l: string) => l.toUpperCase());
+				const description = journeyStepDescriptions[step] || '';
+				return `${name}: ${description}`;
+			})
+			.join('\n');
 
-        let contextInfo = '';
-        
-        // Get POI information if this is a POI-specific card
-        if (cardCategory === 'poi_specific' && poiId) {
-            const { data: poi, error } = await supabase
-                .from('pois')
-                .select('name, description, contextual_data, type, tags')
-                .eq('id', poiId)
-                .single();
+		const characterTypeText =
+			characterType === 'both'
+				? 'all characters'
+				: characterType === 'human'
+					? 'human characters only'
+					: 'non-human characters only';
 
-            if (!error && poi) {
-                contextInfo = `
-                    POI Context:
-                    - Location Name: ${poi.name}
-                    - Description: ${poi.description || 'N/A'}
-                    - Contextual Data: ${poi.contextual_data || 'N/A'}
-                    - POI Type: ${poi.type}
-                    - Tags: ${poi.tags?.join(', ') || 'N/A'}
+		const promptSchema = z.object({
+			title: z.string().max(50),
+			prompt: z.string().max(300)
+		});
 
-                    Please create a card prompt that is specifically tailored to this location and its unique characteristics.`;
-            }
-        } else if (cardCategory === 'general' && keywords) {
-            contextInfo = `
-                    Keywords: ${keywords}
-                    Please incorporate these keywords into the card prompt to guide the player's experience.`;
-        }
+		// Fetch existing cards for style context and deduplication
+		let existingCardsContext = '';
+		if (gameId) {
+			const { data: existingCards } = await supabase
+				.from('cards')
+				.select('title, prompt')
+				.eq('game_id', gameId);
 
-        let existingContentInfo = '';
-        if (existingTitle || existingPrompt) {
-            existingContentInfo = `\n\nEXISTING CONTENT TO REFINE:`;
-            if (existingTitle) {
-                existingContentInfo += `\n- Current Title: "${existingTitle}"`;
-            }
-            if (existingPrompt) {
-                existingContentInfo += `\n- Current Prompt: "${existingPrompt}"`;
-            }
-            existingContentInfo += `\n\nIMPORTANT: The user has provided existing content. Your task is to REFINE and IMPROVE this content while maintaining its core theme and message. Do not create entirely new content from scratch. Instead:
-- Preserve the main idea and theme of the existing title/prompt
-- Enhance clarity, engagement, and narrative quality
-- Ensure it aligns with the selected card type, character type, and journey steps
-- Keep the essence of what the user wrote while making it more polished and effective`;
-        }
+			if (existingCards && existingCards.length > 0) {
+				const cardList = existingCards
+					.map((c: { title: string; prompt: string }, i: number) => `${i + 1}. "${c.title}" — "${c.prompt}"`)
+					.join('\n');
+				existingCardsContext = `\n\nEXISTING CARDS FOR THIS GAME (style reference — do NOT repeat):
+${cardList}
 
-        const prompt = `Generate a card prompt for a location-based storytelling game.     
-                        Card Type: ${type}
-                        
-                        Hero's Journey Steps with Descriptions:
-                        ${journeyStepDetails}
-                        
-                        Character perspective: ${characterTypeText}
-                        ${contextInfo}${existingContentInfo}
+Study the writing style, tone, and vocabulary of these cards. Your new card must feel stylistically consistent with them. The title and prompt must be entirely different from every entry above.`;
+			}
+		}
 
-                        STRICT REQUIREMENTS:
-                        1. Title: Maximum 25 characters (including spaces and punctuation)
-                        2. Prompt: Maximum 150 characters (including spaces and punctuation)
+		// POI or keyword context
+		let contextInfo = '';
+		if (cardCategory === 'poi_specific' && poiId) {
+			const { data: poi, error } = await supabase
+				.from('pois')
+				.select('name, description, contextual_data, type, tags')
+				.eq('id', poiId)
+				.single();
 
-                        The prompt should be aligned with the Hero's Journey step(s) and the card type. If more than one step is provided, ensure the prompt encompasses all relevant aspects.
-                        Must be consise and engaging, encouraging players to immerse themselves in the narrative and interact with their surroundings.
-                        ${cardCategory === 'poi_specific' ? '- Specifically tied to the location' : '- General enough for multiple locations'}
-                        Return ONLY a JSON object with this exact format:
-                        Return ONLY a JSON object:
-                        {
-                        "title": "Your title (max 25 chars)",
-                        "prompt": "Your prompt (max 150 chars)"
-                        }`;
+			if (!error && poi) {
+				contextInfo = `
+POI Context:
+- Location Name: ${poi.name}
+- Description: ${poi.description || 'N/A'}
+- Contextual Data: ${poi.contextual_data || 'N/A'}
+- POI Type: ${poi.type}
+- Tags: ${poi.tags?.join(', ') || 'N/A'}
 
-        const systemPrompt = `You are a specialized content creation assistant for a location-based storytelling game platform. Your role is to help game creators write compelling card titles and prompts that enhance the player experience.
+Please create a card prompt that is specifically tailored to this location and its unique characteristics.`;
+			}
+		} else if (cardCategory === 'general' && keywords) {
+			contextInfo = `
+Keywords: ${keywords}
+Please incorporate these keywords into the card prompt to guide the player's experience.`;
+		}
+
+		// Refinement context
+		let existingContentInfo = '';
+		if (existingTitle || existingPrompt) {
+			existingContentInfo = `\n\nEXISTING CONTENT TO REFINE:`;
+			if (existingTitle) existingContentInfo += `\n- Current Title: "${existingTitle}"`;
+			if (existingPrompt) existingContentInfo += `\n- Current Prompt: "${existingPrompt}"`;
+			existingContentInfo += `\n\nIMPORTANT: Refine and improve this content while maintaining its core theme. Do not create entirely new content from scratch. Preserve the main idea, enhance clarity and engagement, and ensure alignment with the selected card type and journey steps.`;
+		}
+
+		const userPrompt = `Generate a card prompt for a location-based storytelling game.
+Card Type: ${type}
+
+Hero's Journey Steps with Descriptions:
+${journeyStepDetails}
+
+Character perspective: ${characterTypeText}
+${contextInfo}${existingContentInfo}${existingCardsContext}
+
+STRICT REQUIREMENTS:
+1. Title: Maximum 25 characters (including spaces and punctuation)
+2. Prompt: Maximum 150 characters (including spaces and punctuation)
+
+The prompt should be aligned with the Hero's Journey step(s) and the card type. Must be concise and engaging, encouraging players to immerse themselves in the narrative and interact with their surroundings.
+${cardCategory === 'poi_specific' ? '- Specifically tied to the location' : '- General enough for multiple locations'}
+
+Return ONLY a valid JSON object with this exact format:
+{"title": "Your title (max 25 chars)", "prompt": "Your prompt (max 150 chars)"}`;
+
+		const systemPrompt = `You are a specialized content creation assistant for a location-based storytelling game platform. Your role is to help game creators write compelling card titles and prompts that enhance the player experience.
 
 Your expertise includes:
 - Understanding the Hero's Journey narrative framework and its stages
@@ -118,36 +142,31 @@ Your expertise includes:
 - Crafting engaging, concise content that encourages player immersion and interaction with their physical surroundings
 - Adapting tone and content based on character types (human, non-human, or both)
 - Incorporating location-specific context or general keywords effectively
+- Matching the writing style of existing cards while ensuring uniqueness
 - Refining and improving existing content while preserving the creator's original vision and intent
 
-When existing content is provided, your primary goal is to enhance and refine it, NOT to replace it entirely. Stay true to the user's creative direction while improving clarity, engagement, and alignment with game mechanics.
+When existing cards are provided, study their style, tone, and vocabulary to ensure consistency. Never repeat an existing title or prompt verbatim or near-verbatim.
 
-When multiple Hero's Journey steps are selected, you should create prompts that could fall into any of those stages naturally, finding common themes that make sense across the selected steps. Always prioritize clarity, engagement, and adherence to character limits while maintaining narrative coherence.`;
+Always respond with ONLY a valid JSON object — no markdown, no explanation, no extra text.`;
 
-        
+		const completion = await groq.chat.completions.create({
+			model: 'llama-3.3-70b-versatile',
+			messages: [
+				{ role: 'system', content: systemPrompt },
+				{ role: 'user', content: userPrompt }
+			],
+			max_tokens: 200,
+			temperature: 0.8,
+			response_format: { type: 'json_object' }
+		});
 
-        const response = await ai.models.generateContent({
-            model: "gemini-2.5-flash",
-            contents: prompt,
-            config: {
-                thinkingConfig: {
-                    thinkingBudget: 0, // Disables thinking
-                },
-                responseMimeType: "application/json",
-                responseJsonSchema: z.toJSONSchema(promptSchema),
-                systemInstruction: systemPrompt,
-            }
-        });
-        if (!response.text) {
-            throw new Error('Empty response from AI');
-        }
-        const content = promptSchema.parse(JSON.parse(response.text));
-        return json(content);
-    } catch (error) {
-        console.error('AI generation error:', error);
-        return json(
-            { error: 'Failed to generate content' },
-            { status: 500 }
-        );
-    }
+		const raw = completion.choices[0]?.message?.content;
+		if (!raw) throw new Error('Empty response from AI');
+
+		const content = promptSchema.parse(JSON.parse(raw));
+		return json(content);
+	} catch (error) {
+		console.error('AI generation error:', error);
+		return json({ error: 'Failed to generate content' }, { status: 500 });
+	}
 };

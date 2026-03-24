@@ -21,7 +21,9 @@ export const characterSchema = z.object({
     image_url: z.url().optional().nullable().or(z.literal('')),
     category: z.enum(['human', 'non-human'], {
         error: 'Category is required'
-    })
+    }),
+    bg_color: z.string().default('#ffffff'),
+    text_color: z.string().default('#000000')
 });
 
 export const poiSchema = z.object({
@@ -36,7 +38,8 @@ export const poiSchema = z.object({
     }),
     tags: z.array(z.string()).default([]),
     latitude: z.number().min(-90).max(90),
-    longitude: z.number().min(-180).max(180)
+    longitude: z.number().min(-180).max(180),
+    radius: z.number().int().min(10).max(100).default(50)
 });
 
 export const cardSchema = z.object({

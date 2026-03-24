@@ -1,52 +1,18 @@
-import { fail, redirect } from '@sveltejs/kit';
+import { fail } from '@sveltejs/kit';
 import { superValidate } from 'sveltekit-superforms';
 import { zod4 } from 'sveltekit-superforms/adapters';
 import type { Actions, PageServerLoad } from './$types';
 import { characterSchema } from '$lib/zod/schema';
 
-export const load: PageServerLoad = async ({ params, locals: { supabase, safeGetSession } }) => {
-    const { session } = await safeGetSession();
-    
-    if (!session) {
-        throw redirect(303, '/auth');
-    }
-
-    // Verify game ownership
-    const { data: game, error: gameError } = await supabase
-        .from('games')
-        .select('id, game_id')
-        .eq('game_id', params.id)
-        .eq('owner_id', session.user.id)
-        .single();
-
-    if (gameError || !game) {
-        throw redirect(303, '/dashboard');
-    }
-
-    // Fetch existing characters
-    const { data: characters, error: charactersError } = await supabase
-        .from('characters')
-        .select('*')
-        .eq('game_id', game.id)
-        .order('created_at', { ascending: true });
-
-    if (charactersError) {
-        console.error('Error fetching characters:', charactersError);
-    }
-
-    // Initialize empty form for creating new character
+export const load: PageServerLoad = async ({ parent }) => {
+    const { game, characters } = await parent();
     const form = await superValidate(zod4(characterSchema));
-
-    return {
-        form,
-        characters: characters || [],
-        gameId: game.id
-    };
+    return { form, characters, gameId: game.id };
 };
 
 export const actions = {
-    create: async ({ request, params, locals: { supabase, safeGetSession } }) => {
-        const { session } = await safeGetSession();
+    create: async ({ request, params, locals: { supabase, getSession } }) => {
+        const session = await getSession();
         
         if (!session) {
             return fail(401, { message: 'Unauthorized' });
@@ -78,7 +44,9 @@ export const actions = {
                 name: form.data.name,
                 summary: form.data.summary,
                 image_url: form.data.image_url || null,
-                category: form.data.category
+                category: form.data.category,
+                bg_color: form.data.bg_color,
+                text_color: form.data.text_color
             });
 
         if (error) {
@@ -89,8 +57,8 @@ export const actions = {
         return { form, success: true };
     },
 
-    update: async ({ request, params, locals: { supabase, safeGetSession } }) => {
-        const { session } = await safeGetSession();
+    update: async ({ request, params, locals: { supabase, getSession } }) => {
+        const session = await getSession();
         
         if (!session) {
             return fail(401, { message: 'Unauthorized' });
@@ -125,7 +93,9 @@ export const actions = {
                 name: form.data.name,
                 summary: form.data.summary,
                 image_url: form.data.image_url || null,
-                category: form.data.category
+                category: form.data.category,
+                bg_color: form.data.bg_color,
+                text_color: form.data.text_color
             })
             .eq('id', form.data.id)
             .eq('game_id', game.id);
@@ -138,8 +108,8 @@ export const actions = {
         return { form, success: true };
     },
 
-    delete: async ({ request, params, locals: { supabase, safeGetSession } }) => {
-        const { session } = await safeGetSession();
+    delete: async ({ request, params, locals: { supabase, getSession } }) => {
+        const session = await getSession();
         
         if (!session) {
             return fail(401, { message: 'Unauthorized' });

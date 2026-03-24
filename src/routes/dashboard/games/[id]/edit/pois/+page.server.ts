@@ -1,46 +1,35 @@
-import { fail, redirect } from '@sveltejs/kit';
-import { superValidate } from 'sveltekit-superforms';
-import { zod4 } from 'sveltekit-superforms/adapters';
-import type { Actions, PageServerLoad } from './$types';
-import { poiSchema } from '$lib/zod/schema';
+import { fail } from "@sveltejs/kit";
+import { superValidate } from "sveltekit-superforms";
+import { zod4 } from "sveltekit-superforms/adapters";
+import type { Actions, PageServerLoad } from "./$types";
+import { poiSchema } from "$lib/zod/schema";
 
-export const load: PageServerLoad = async ({ params, locals: { supabase, safeGetSession } }) => {
-    const { session } = await safeGetSession();
-    
-    if (!session) {
-        throw redirect(303, '/auth');
-    }
-
-    // Verify game ownership
-    const { data: game, error: gameError } = await supabase
-        .from('games')
-        .select('id, game_id, location')
-        .eq('game_id', params.id)
-        .eq('owner_id', session.user.id)
-        .single();
-
-    if (gameError || !game) {
-        throw redirect(303, '/dashboard');
-    }
+export const load: PageServerLoad = async (
+    { parent, locals: { supabase } },
+) => {
+    const { game } = await parent();
 
     // Use RPC function to get game location coordinates
     let center = { lng: 0, lat: 0 };
     if (game.id) {
         const { data: locationResult } = await supabase
-            .rpc('get_game_location', { game_id_param: game.id });
-        
-        if (locationResult && typeof locationResult === 'object') {
-            const coords = locationResult as { longitude: number; latitude: number };
+            .rpc("get_game_location", { game_id_param: game.id });
+
+        if (locationResult && typeof locationResult === "object") {
+            const coords = locationResult as {
+                longitude: number;
+                latitude: number;
+            };
             center = { lng: coords.longitude, lat: coords.latitude };
         }
     }
 
     // Use RPC function to get POIs with coordinates
     const { data: pois, error: poisError } = await supabase
-        .rpc('get_game_pois_with_location', { game_id_param: game.id });
+        .rpc("get_game_pois_with_location", { game_id_param: game.id });
 
     if (poisError) {
-        console.error('Error fetching POIs:', poisError);
+        console.error("Error fetching POIs:", poisError);
     }
 
     const form = await superValidate(zod4(poiSchema));
@@ -49,16 +38,18 @@ export const load: PageServerLoad = async ({ params, locals: { supabase, safeGet
         form,
         pois: pois || [],
         gameId: game.id,
-        center
+        center,
     };
 };
 
 export const actions = {
-    create: async ({ request, params, locals: { supabase, safeGetSession } }) => {
-        const { session } = await safeGetSession();
-        
+    create: async (
+        { request, params, locals: { supabase, getSession } },
+    ) => {
+        const session = await getSession();
+
         if (!session) {
-            return fail(401, { message: 'Unauthorized' });
+            return fail(401, { message: "Unauthorized" });
         }
 
         const form = await superValidate(request, zod4(poiSchema));
@@ -69,22 +60,22 @@ export const actions = {
 
         // Get game internal ID
         const { data: game } = await supabase
-            .from('games')
-            .select('id')
-            .eq('game_id', params.id)
-            .eq('owner_id', session.user.id)
+            .from("games")
+            .select("id")
+            .eq("game_id", params.id)
+            .eq("owner_id", session.user.id)
             .single();
 
         if (!game) {
-            return fail(403, { form, message: 'Game not found' });
+            return fail(403, { form, message: "Game not found" });
         }
 
-        const locationWKT = form.data.latitude && form.data.longitude 
-                    ? `SRID=4326;POINT(${form.data.longitude} ${form.data.latitude})`
-                    : null;
+        const locationWKT = form.data.latitude && form.data.longitude
+            ? `SRID=4326;POINT(${form.data.longitude} ${form.data.latitude})`
+            : null;
 
         const { error: insertError } = await supabase
-            .from('pois')
+            .from("pois")
             .insert({
                 game_id: game.id,
                 name: form.data.name,
@@ -94,21 +85,27 @@ export const actions = {
                 location: locationWKT,
                 type: form.data.type,
                 tags: form.data.tags,
+                radius: form.data.radius,
             });
 
         if (insertError) {
-            console.error('Error creating POI:', insertError);
-            return fail(500, { form, message: 'Failed to create POI: ' + insertError.message });
+            console.error("Error creating POI:", insertError);
+            return fail(500, {
+                form,
+                message: "Failed to create POI: " + insertError.message,
+            });
         }
 
         return { form, success: true };
     },
 
-    update: async ({ request, params, locals: { supabase, safeGetSession } }) => {
-        const { session } = await safeGetSession();
-        
+    update: async (
+        { request, params, locals: { supabase, getSession } },
+    ) => {
+        const session = await getSession();
+
         if (!session) {
-            return fail(401, { message: 'Unauthorized' });
+            return fail(401, { message: "Unauthorized" });
         }
 
         const form = await superValidate(request, zod4(poiSchema));
@@ -118,26 +115,27 @@ export const actions = {
         }
 
         if (!form.data.id) {
-            return fail(400, { form, message: 'POI ID is required' });
+            return fail(400, { form, message: "POI ID is required" });
         }
 
         // Verify ownership through game
         const { data: game } = await supabase
-            .from('games')
-            .select('id')
-            .eq('game_id', params.id)
-            .eq('owner_id', session.user.id)
+            .from("games")
+            .select("id")
+            .eq("game_id", params.id)
+            .eq("owner_id", session.user.id)
             .single();
 
         if (!game) {
-            return fail(403, { form, message: 'Game not found' });
+            return fail(403, { form, message: "Game not found" });
         }
 
         // Create PostGIS POINT
-        const locationPoint = `POINT(${form.data.longitude} ${form.data.latitude})`;
+        const locationPoint =
+            `POINT(${form.data.longitude} ${form.data.latitude})`;
 
         const { error: updateError } = await supabase
-            .from('pois')
+            .from("pois")
             .update({
                 name: form.data.name,
                 description: form.data.description,
@@ -145,78 +143,148 @@ export const actions = {
                 image_url: form.data.image_url || null,
                 location: `SRID=4326;${locationPoint}`,
                 type: form.data.type,
-                tags: form.data.tags
+                tags: form.data.tags,
+                radius: form.data.radius,
             })
-            .eq('id', form.data.id)
-            .eq('game_id', game.id);
+            .eq("id", form.data.id)
+            .eq("game_id", game.id);
 
         if (updateError) {
-            console.error('Error updating POI:', updateError);
-            return fail(500, { form, message: 'Failed to update POI: ' + updateError.message });
+            console.error("Error updating POI:", updateError);
+            return fail(500, {
+                form,
+                message: "Failed to update POI: " + updateError.message,
+            });
         }
 
         return { form, success: true };
     },
 
-    delete: async ({ request, params, locals: { supabase, safeGetSession } }) => {
-        const { session } = await safeGetSession();
-        
+    updateLocation: async (
+        { request, params, locals: { supabase, getSession } },
+    ) => {
+        const session = await getSession();
+
         if (!session) {
-            return fail(401, { message: 'Unauthorized' });
+            return fail(401, { message: "Unauthorized" });
         }
 
         const formData = await request.formData();
-        const poiId = formData.get('poiId');
+        const id = formData.get("id");
+        const latitude = formData.get("latitude");
+        const longitude = formData.get("longitude");
 
-        if (!poiId || isNaN(Number(poiId))) {
-            return fail(400, { message: 'Valid POI ID is required' });
+        // Validate inputs
+        if (!id || isNaN(Number(id))) {
+            return fail(400, { message: "Valid POI ID is required" });
+        }
+
+        if (
+            latitude === null || longitude === null ||
+            isNaN(Number(latitude)) || isNaN(Number(longitude))
+        ) {
+            return fail(400, {
+                message: "Valid latitude and longitude are required",
+            });
         }
 
         // Verify ownership through game
         const { data: game } = await supabase
-            .from('games')
-            .select('id')
-            .eq('game_id', params.id)
-            .eq('owner_id', session.user.id)
+            .from("games")
+            .select("id")
+            .eq("game_id", params.id)
+            .eq("owner_id", session.user.id)
             .single();
 
         if (!game) {
-            return fail(403, { message: 'Game not found' });
+            return fail(403, { message: "Game not found" });
+        }
+
+        // Create PostGIS POINT
+        const locationPoint = `POINT(${longitude} ${latitude})`;
+
+        const { error: updateError } = await supabase
+            .from("pois")
+            .update({
+                location: `SRID=4326;${locationPoint}`,
+            })
+            .eq("id", Number(id))
+            .eq("game_id", game.id);
+
+        if (updateError) {
+            console.error("Error updating POI location:", updateError);
+            return fail(500, {
+                message: "Failed to update POI location: " +
+                    updateError.message,
+            });
+        }
+
+        return { success: true };
+    },
+
+    delete: async (
+        { request, params, locals: { supabase, getSession } },
+    ) => {
+        const session = await getSession();
+
+        if (!session) {
+            return fail(401, { message: "Unauthorized" });
+        }
+
+        const formData = await request.formData();
+        const poiId = formData.get("poiId");
+
+        if (!poiId || isNaN(Number(poiId))) {
+            return fail(400, { message: "Valid POI ID is required" });
+        }
+
+        // Verify ownership through game
+        const { data: game } = await supabase
+            .from("games")
+            .select("id")
+            .eq("game_id", params.id)
+            .eq("owner_id", session.user.id)
+            .single();
+
+        if (!game) {
+            return fail(403, { message: "Game not found" });
         }
 
         // Get POI to delete image
         const { data: poi } = await supabase
-            .from('pois')
-            .select('image_url')
-            .eq('id', Number(poiId))
-            .eq('game_id', game.id)
+            .from("pois")
+            .select("image_url")
+            .eq("id", Number(poiId))
+            .eq("game_id", game.id)
             .single();
 
         // Delete POI image from storage if exists
         if (poi?.image_url) {
             try {
-                const urlWithoutParams = poi.image_url.split('?')[0];
+                const urlWithoutParams = poi.image_url.split("?")[0];
                 const url = new URL(urlWithoutParams);
-                const pathParts = url.pathname.split('/');
-                const imagePath = pathParts.slice(-4).join('/'); // user_id/game_id/pois/filename
-                await supabase.storage.from('game-images').remove([imagePath]);
+                const pathParts = url.pathname.split("/");
+                const imagePath = pathParts.slice(-4).join("/"); // user_id/game_id/pois/filename
+                await supabase.storage.from("game-images").remove([imagePath]);
             } catch (error) {
-                console.warn('Error deleting POI image:', error);
+                console.warn("Error deleting POI image:", error);
             }
         }
 
         // Delete POI from database
         const { error } = await supabase
-            .from('pois')
+            .from("pois")
             .delete()
-            .eq('id', Number(poiId))
-            .eq('game_id', game.id);
+            .eq("id", Number(poiId))
+            .eq("game_id", game.id);
 
         if (error) {
-            console.error('Error deleting POI:', error);
-            return fail(500, { message: 'Failed to delete POI: ' + error.message });
+            console.error("Error deleting POI:", error);
+            return fail(500, {
+                message: "Failed to delete POI: " + error.message,
+            });
         }
 
         return { success: true };
-    }
+    },
 } satisfies Actions;

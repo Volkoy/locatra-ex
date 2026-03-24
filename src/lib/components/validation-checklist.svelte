@@ -39,9 +39,9 @@
 	});
 </script>
 
-<Card.Root class="sticky top-2">
-	<Card.Header>
-		<Card.Title class="text-lg">{title}</Card.Title>
+<Card.Root class="sticky top-2 border-0 shadow-none">
+	<Card.Header class="px-0">
+		<Card.Title class="text-base">{title}</Card.Title>
 		<Card.Description>
 			{summary.complete}/{summary.total} complete
 			{#if summary.warnings > 0}
@@ -61,7 +61,7 @@
 			></div>
 		</div>
 	</Card.Header>
-	<Card.Content>
+	<Card.Content class="px-0">
 		<div class="space-y-3">
 			{#each checks as check}
 				{@const config = statusConfig[check.status]}

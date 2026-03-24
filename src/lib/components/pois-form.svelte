@@ -1,28 +1,38 @@
 <script lang="ts">
 	import * as Sheet from '$lib/components/ui/sheet/index.js';
+	import * as Drawer from '$lib/components/ui/drawer/index.js';
 	import * as Form from '$lib/components/ui/form/index.js';
 	import * as Select from '$lib/components/ui/select/index.js';
 	import * as HoverCard from '$lib/components/ui/hover-card/index.js';
-	import { Label } from '$lib/components/ui/label/index.js';
+	import * as Tooltip from '$lib/components/ui/tooltip/index.js';
 	import { Input } from '$lib/components/ui/input/index.js';
 	import { Textarea } from '$lib/components/ui/textarea/index.js';
 	import { Button } from '$lib/components/ui/button';
-	import ValidationChecklist from './validation-checklist.svelte';
+	import { MapLibre, Marker, NavigationControl, GeolocateControl } from 'svelte-maplibre';
+	import type { Map, MapMouseEvent, LngLat, GeoJSONSource } from 'maplibre-gl';
 	import {
-		MapLibre,
-		Marker,
-		MapEvents,
-		NavigationControl,
-		GeolocateControl
-	} from 'svelte-maplibre';
-	import type { Map, MapMouseEvent, LngLat } from 'maplibre-gl';
-	import { Upload, X, MapPin, Trash2, SquarePen, ArrowLeft, ArrowRight } from 'lucide-svelte';
+		Footprints,
+		X,
+		MapPin,
+		Trash2,
+		SquarePen,
+		Flag,
+		Search,
+		List,
+		Leaf,
+		BookOpen,
+		Eye,
+		Landmark,
+		ArrowLeft,
+		ArrowRight
+	} from 'lucide-svelte';
+	import ImageUpload from './image-upload.svelte';
+	import { Slider } from '$lib/components/ui/slider';
 	import { superForm } from 'sveltekit-superforms';
 	import { poiSchema } from '$lib/zod/schema';
 	import { zod4Client } from 'sveltekit-superforms/adapters';
 	import { invalidateAll } from '$app/navigation';
 	import { onMount } from 'svelte';
-	import SuperDebug from 'sveltekit-superforms';
 	import { toast } from 'svelte-sonner';
 	import { Spinner } from './ui/spinner';
 
@@ -37,87 +47,111 @@
 	];
 
 	type POI = {
-		id?: number;
+		id: number;
 		name: string;
 		description: string;
-		context: string;
+		contextual_data: string;
 		image_url?: string;
 		type: string;
 		tags: string[];
 		latitude: number;
 		longitude: number;
+		radius: number;
 	};
 
 	let pois = $derived(data.pois || []);
 	let isFormOpen = $state(false);
 	let editingPOI = $state<POI | null>(null);
-	let imagePreview = $state<string | null>(null);
-	let isUploadingImage = $state(false);
-	let imageTimestamp = $state(Date.now());
 	let map = $state<Map>();
 	let center = $derived(data.center);
 	let tagInput = $state('');
 	let tempMarkerPosition = $state<{ lng: number; lat: number } | null>(null);
 	let hasInitialized = $state(false);
+	let isDraggingMarker = $state(false);
+	let justFinishedDragging = $state(false);
+	let poiPositions = $state<Record<number, { lng: number; lat: number }>>({});
+	let previousEditingPOIPosition = $state<{ lng: number; lat: number } | null>(null);
+	let queryLocation = $state('');
+	let searchResults = $state<Array<{ lat: string; lon: string; display_name: string }>>([]);
+	let showSearchResults = $state(false);
+	let isLoadingSearch = $state(false);
+	let lastRequestTime = 0;
+	const MIN_REQUEST_INTERVAL = 1000;
+	let searchContainerRef: HTMLDivElement | null = null;
+	let isListOpen = $state(false);
 
-	// Clear temporary marker when form closes
+	// Initialize POI positions
 	$effect(() => {
-		if (!isFormOpen) {
-			tempMarkerPosition = null;
+		pois.forEach((poi: POI) => {
+			if (!poiPositions[poi.id]) {
+				poiPositions[poi.id] = { lng: poi.longitude, lat: poi.latitude };
+			}
+		});
+	});
+
+	// Sync POI position to form data when editing and marker is dragged
+	$effect(() => {
+		if (editingPOI?.id && poiPositions[editingPOI.id]) {
+			$formData.latitude = poiPositions[editingPOI.id].lat;
+			$formData.longitude = poiPositions[editingPOI.id].lng;
 		}
 	});
 
-	const MIN_POIS = 6;
-
-	const validationChecks = $derived.by(
-		(): Array<{
-			label: string;
-			status: 'complete' | 'incomplete' | 'warning';
-			description: string;
-		}> => {
-			const poiTypes = new Set(pois.map((p: any) => p.type));
-			const poisWithoutImages = pois.filter((p: any) => !p.image_url).length;
-
-			return [
-				{
-					label: `At least ${MIN_POIS} POIs`,
-					status: (pois.length >= MIN_POIS ? 'complete' : 'incomplete') as
-						| 'complete'
-						| 'incomplete',
-					description: `Required (${pois.length} created)`
-				},
-				{
-					label: 'At least 3 different types',
-					status: (pois.length >= MIN_POIS && poiTypes.size >= 3
-						? 'complete'
-						: poiTypes.size >= 3 || pois.length >= MIN_POIS
-							? 'warning'
-							: 'incomplete') as 'complete' | 'incomplete' | 'warning',
-					description: `Recommended (${poiTypes.size} types used)`
-				},
-				{
-					label: 'POI images',
-					status: (pois.length === 0
-						? 'incomplete'
-						: poisWithoutImages === 0
-							? 'complete'
-							: 'warning') as 'complete' | 'incomplete' | 'warning',
-					description:
-						pois.length === 0
-							? 'No POIs yet'
-							: poisWithoutImages > 0
-								? `${poisWithoutImages} missing image${poisWithoutImages > 1 ? 's' : ''}`
-								: 'All POIs have images'
-				}
-			];
+	// Sync temp marker position to form data when creating and marker is dragged
+	$effect(() => {
+		if (tempMarkerPosition && !editingPOI) {
+			$formData.latitude = tempMarkerPosition.lat;
+			$formData.longitude = tempMarkerPosition.lng;
 		}
-	);
+	});
+
+	// Clear temporary marker and reset drag state when form closes
+	$effect(() => {
+		if (!isFormOpen) {
+			tempMarkerPosition = null;
+			// Reset drag state in case it got stuck
+			isDraggingMarker = false;
+			justFinishedDragging = false;
+			previousEditingPOIPosition = null;
+			editingPOI = null;
+		}
+	});
 
 	onMount(() => {
 		if (map && center && !hasInitialized) {
 			map.setCenter(center as LngLat);
 			hasInitialized = true;
 		}
+
+		// Add global mouseup listener to reset drag state if it gets stuck
+		const handleGlobalMouseUp = () => {
+			if (isDraggingMarker) {
+				isDraggingMarker = false;
+				justFinishedDragging = true;
+				setTimeout(() => {
+					justFinishedDragging = false;
+				}, 200);
+			}
+		};
+
+		// Add click outside handler to close search results
+		const handleClickOutside = (e: MouseEvent) => {
+			if (
+				showSearchResults &&
+				searchContainerRef &&
+				!searchContainerRef.contains(e.target as Node)
+			) {
+				showSearchResults = false;
+			}
+		};
+
+		window.addEventListener('mouseup', handleGlobalMouseUp);
+		document.addEventListener('click', handleClickOutside);
+
+		return () => {
+			window.removeEventListener('mouseup', handleGlobalMouseUp);
+			document.removeEventListener('click', handleClickOutside);
+		};
 	});
 
 	const form = superForm(data.form, {
@@ -129,7 +163,6 @@
 				const action = editingPOI ? 'updated' : 'created';
 				toast.success(`POI ${action} successfully!`);
 				isFormOpen = false;
-				imagePreview = null;
 				editingPOI = null;
 				tempMarkerPosition = null;
 				invalidateAll();
@@ -137,13 +170,79 @@
 		}
 	});
 
-	const { form: formData, errors, enhance, delayed } = form;
+	const { form: formData, enhance, delayed } = form;
 
 	const typeTriggerContent = $derived(
 		types.find((t) => t.value === $formData.type)?.label || 'Select type'
 	);
 
+	async function rateLimitedFetch(url: string): Promise<Response> {
+		const now = Date.now();
+		const timeSinceLastRequest = now - lastRequestTime;
+
+		if (timeSinceLastRequest < MIN_REQUEST_INTERVAL) {
+			// Wait for the remaining time
+			await new Promise((resolve) =>
+				setTimeout(resolve, MIN_REQUEST_INTERVAL - timeSinceLastRequest)
+			);
+		}
+
+		lastRequestTime = Date.now();
+
+		return fetch(url, {
+			headers: {
+				'User-Agent': 'LocatraEx/1.0 (cyred3@gmail.com)',
+				Referer: window.location.origin
+			}
+		});
+	}
+
+	async function searchLocation(query: string) {
+		if (!query || query.trim() === '') return;
+		isLoadingSearch = true;
+		searchResults = [];
+		showSearchResults = true;
+		try {
+			const response = await rateLimitedFetch(
+				`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=5`
+			);
+			const results = (await response.json()) as Array<{
+				lat: string;
+				lon: string;
+				display_name: string;
+			}>;
+			searchResults = results;
+		} catch (error) {
+			console.error('Location search failed:', error);
+			toast.error('Failed to search location');
+		} finally {
+			isLoadingSearch = false;
+		}
+	}
+
+	function selectLocation(result: { lat: string; lon: string; display_name: string }) {
+		const lat = parseFloat(result.lat);
+		const lng = parseFloat(result.lon);
+
+		// Fly to the selected location
+		if (map) {
+			map.flyTo({
+				center: [lng, lat],
+				zoom: 16,
+				duration: 1000
+			});
+		}
+
+		// Clear search UI
+		searchResults = [];
+		showSearchResults = false;
+		queryLocation = '';
+	}
+
 	const handleMapClick = (e: MapMouseEvent) => {
+		// Don't handle map clicks when dragging markers or right after finishing a drag
+		if (isDraggingMarker || justFinishedDragging) return;
+
 		const { lng, lat } = e.lngLat;
 		console.log('Map clicked at:', lng, lat);
 		tempMarkerPosition = { lng, lat };
@@ -161,7 +260,6 @@
 		}
 
 		editingPOI = null;
-		imagePreview = null;
 		$formData.id = undefined;
 		$formData.name = '';
 		$formData.description = '';
@@ -174,9 +272,157 @@
 		isFormOpen = true;
 	};
 
-	const openEditForm = (poi: any) => {
+	const getPoiIcon = (type: string) => {
+		switch (type) {
+			case 'nature':
+				return Leaf;
+			case 'history':
+				return BookOpen;
+			case 'sense':
+				return Eye;
+			case 'action':
+				return Footprints;
+			case 'landmark':
+				return Landmark;
+			default:
+				return MapPin;
+		}
+	};
+
+	const getPoiColor = (type: string) => {
+		switch (type) {
+			case 'nature':
+				return 'bg-nature-green';
+			case 'history':
+				return 'bg-history-yellow';
+			case 'sense':
+				return 'bg-purple-600';
+			case 'action':
+				return 'bg-sense-red';
+			case 'landmark':
+				return 'bg-landmark-green';
+			default:
+				return 'bg-blue-600';
+		}
+	};
+
+	const getPoiPaleBg = (type: string) => {
+		switch (type) {
+			case 'nature':
+				return 'bg-nature-green/10';
+			case 'history':
+				return 'bg-history-yellow/10';
+			case 'sense':
+				return 'bg-purple-600/10';
+			case 'action':
+				return 'bg-sense-red/10';
+			case 'landmark':
+				return 'bg-landmark-green/10';
+			default:
+				return 'bg-gray-100';
+		}
+	};
+
+	const getPoiTextColor = (type: string) => {
+		switch (type) {
+			case 'nature':
+				return 'text-nature-green';
+			case 'history':
+				return 'text-history-yellow';
+			case 'sense':
+				return 'text-purple-600';
+			case 'action':
+				return 'text-sense-red';
+			case 'landmark':
+				return 'text-landmark-green';
+			default:
+				return 'text-gray-700';
+		}
+	};
+
+	function createCircleGeoJSON(lng: number, lat: number, radiusMeters: number) {
+		const n = 64;
+		const coords: [number, number][] = [];
+		const km = radiusMeters / 1000;
+		const distX = km / (111.32 * Math.cos((lat * Math.PI) / 180));
+		const distY = km / 110.574;
+		for (let i = 0; i <= n; i++) {
+			const theta = (i / n) * 2 * Math.PI;
+			coords.push([lng + distX * Math.cos(theta), lat + distY * Math.sin(theta)]);
+		}
+		return {
+			type: 'FeatureCollection' as const,
+			features: [
+				{
+					type: 'Feature' as const,
+					geometry: { type: 'Polygon' as const, coordinates: [coords] },
+					properties: {}
+				}
+			]
+		};
+	}
+
+	$effect(() => {
+		const FILL = 'poi-radius-fill';
+		const OUTLINE = 'poi-radius-outline';
+		const SOURCE = 'poi-radius';
+
+		const cleanup = () => {
+			if (!map) return;
+			if (map.getLayer(FILL)) map.removeLayer(FILL);
+			if (map.getLayer(OUTLINE)) map.removeLayer(OUTLINE);
+			if (map.getSource(SOURCE)) map.removeSource(SOURCE);
+		};
+
+		if (!map || !isFormOpen) return cleanup;
+
+		const pos = editingPOI?.id ? poiPositions[editingPOI.id] : tempMarkerPosition;
+		if (!pos) return cleanup;
+
+		const geojson = createCircleGeoJSON(pos.lng, pos.lat, $formData.radius);
+
+		if (map.getSource(SOURCE)) {
+			(map.getSource(SOURCE) as GeoJSONSource).setData(geojson);
+		} else {
+			map.addSource(SOURCE, { type: 'geojson', data: geojson });
+			map.addLayer({
+				id: FILL,
+				type: 'fill',
+				source: SOURCE,
+				paint: { 'fill-color': '#6366f1', 'fill-opacity': 0.15 }
+			});
+			map.addLayer({
+				id: OUTLINE,
+				type: 'line',
+				source: SOURCE,
+				paint: { 'line-color': '#6366f1', 'line-width': 2, 'line-dasharray': [3, 2] }
+			});
+		}
+
+		return cleanup;
+	});
+
+	const openEditForm = (poi: POI) => {
 		tempMarkerPosition = null;
 		editingPOI = poi;
+
+		// Ensure POI position is in sync
+		if (!poiPositions[poi.id]) {
+			poiPositions[poi.id] = { lng: poi.longitude, lat: poi.latitude };
+		}
+
+		// Store the current position to restore if the user cancels
+		previousEditingPOIPosition = { ...poiPositions[poi.id] };
+
+		// Fly to POI location - use the current position from poiPositions
+		if (map) {
+			map.flyTo({
+				center: [poiPositions[poi.id].lng, poiPositions[poi.id].lat],
+				zoom: 16,
+				duration: 1000
+			});
+		}
+
 		$formData.id = poi.id;
 		$formData.name = poi.name;
 		$formData.description = poi.description || '';
@@ -184,95 +430,11 @@
 		$formData.contextual_data = poi.contextual_data || '';
 		$formData.type = poi.type;
 		$formData.tags = poi.tags || [];
-		$formData.latitude = poi.latitude;
-		$formData.longitude = poi.longitude;
-		imagePreview = poi.image_url ? `${poi.image_url}?t=${Date.now()}` : null;
+		$formData.latitude = poiPositions[poi.id].lat;
+		$formData.longitude = poiPositions[poi.id].lng;
+		$formData.radius = poi.radius ?? 50;
 		isFormOpen = true;
 	};
-
-	async function handleImageUpload(event: Event) {
-		const input = event.target as HTMLInputElement;
-		const file = input.files?.[0];
-
-		if (!file) return;
-
-		if (!file.type.startsWith('image/')) {
-			alert('Please select an image file');
-			return;
-		}
-
-		if (file.size > 10 * 1024 * 1024) {
-			alert('Image must be less than 10MB');
-			return;
-		}
-
-		const oldImageUrl = $formData.image_url;
-
-		const reader = new FileReader();
-		reader.onload = (e) => {
-			imagePreview = e.target?.result as string;
-		};
-		reader.readAsDataURL(file);
-
-		await uploadImageToSupabase(file, oldImageUrl);
-	}
-
-	async function uploadImageToSupabase(file: File, oldImageUrl?: string | null) {
-		isUploadingImage = true;
-		try {
-			if (!session) {
-				alert('You must be logged in to upload images');
-				return;
-			}
-
-			const fileExt = file.name.split('.').pop();
-			const fileName = `${editingPOI?.id || 'new'}-${Date.now()}.${fileExt}`;
-			const filePath = `${session.user.id}/${params.id}/pois/${fileName}`;
-
-			// Delete old image if exists
-			if (oldImageUrl && oldImageUrl.trim() !== '') {
-				try {
-					const urlWithoutParams = oldImageUrl.split('?')[0];
-					const url = new URL(urlWithoutParams);
-					const pathParts = url.pathname.split('/');
-					const oldPath = pathParts.slice(-4).join('/');
-					await supabase.storage.from('game-images').remove([oldPath]);
-				} catch (error) {
-					console.warn('Error deleting old image:', error);
-				}
-			}
-
-			const { error } = await supabase.storage.from('game-images').upload(filePath, file, {
-				cacheControl: '3600',
-				upsert: true
-			});
-
-			if (error) {
-				console.error('Upload error:', error);
-				alert('Failed to upload image: ' + error.message);
-				return;
-			}
-
-			const {
-				data: { publicUrl }
-			} = supabase.storage.from('game-images').getPublicUrl(filePath);
-
-			$formData.image_url = publicUrl;
-			imageTimestamp = Date.now();
-			imagePreview = `${publicUrl}?t=${imageTimestamp}`;
-		} catch (error) {
-			console.error('Upload error:', error);
-			alert('Failed to upload image');
-		} finally {
-			isUploadingImage = false;
-		}
-	}
-
-	function removeImage() {
-		if (isUploadingImage) return;
-		imagePreview = null;
-		$formData.image_url = '';
-	}
 
 	function addTag() {
 		const sanitizedTag = tagInput.trim().replace(/\s+/g, '');
@@ -284,7 +446,26 @@
 	}
 
 	function removeTag(index: number) {
-		$formData.tags = $formData.tags.filter((_, i) => i !== index);
+		$formData.tags = $formData.tags.filter((_: string, i: number) => i !== index);
+	}
+
+	async function updatePOIPosition(id: number, lng: number, lat: number) {
+		const formData = new FormData();
+		formData.append('id', id.toString());
+		formData.append('latitude', lat.toString());
+		formData.append('longitude', lng.toString());
+
+		const response = await fetch('?/updateLocation', {
+			method: 'POST',
+			body: formData
+		});
+
+		if (response.ok) {
+			toast.success('POI location updated!');
+			await invalidateAll();
+		} else {
+			toast.error('Failed to update POI location');
+		}
 	}
 
 	async function deletePOI(id: number) {
@@ -307,203 +488,313 @@
 	}
 </script>
 
-<div class="flex h-full w-full gap-2 overflow-hidden">
-	<!-- Map -->
-	<div class="flex-1 rounded-lg border border-gray-300">
-		<MapLibre
-			style="https://basemaps.cartocdn.com/gl/positron-gl-style/style.json"
-			class="h-full w-full"
-			bind:map
-			zoom={14}
-			onclick={handleMapClick}
-		>
-			{#each pois as poi (poi.id)}
-				<Marker lngLat={[poi.longitude, poi.latitude]}>
-					<HoverCard.Root openDelay={200}>
-						<HoverCard.Trigger>
-							<Button
-								onclick={() => openEditForm(poi)}
-								class="flex size-10 items-center justify-center rounded-full bg-blue-600 p-2 text-white"
-							>
-								<MapPin class="size-6" stroke-width={2} />
-							</Button>
-						</HoverCard.Trigger>
-						<HoverCard.Content class="w-80 overflow-hidden p-0">
-							<div class="flex flex-col">
-								<!-- POI Image -->
-								<div
-									class="relative h-32 overflow-hidden bg-gradient-to-br from-gray-100 to-gray-200"
-								>
-									{#if poi.image_url}
-										<img src={poi.image_url} alt={poi.name} class="h-full w-full object-cover" />
-									{:else}
-										<div class="flex h-full w-full items-center justify-center">
-											<MapPin class="h-12 w-12 text-gray-300" />
-										</div>
-									{/if}
-									<!-- Type Badge -->
-									<div class="absolute top-2 right-2">
-										<span
-											class="rounded-full bg-white/90 px-3 py-1.5 text-xs font-semibold text-gray-700 capitalize shadow-sm backdrop-blur-sm"
-										>
-											{poi.type}
-										</span>
-									</div>
-								</div>
-
-								<!-- POI Content -->
-								<div class="space-y-2 p-4">
-									<!-- POI Name -->
-									<h4 class="line-clamp-2 text-base leading-tight font-bold text-gray-900">
-										{poi.name}
-									</h4>
-
-									<!-- POI Description -->
-									{#if poi.description}
-										<p class="line-clamp-3 text-sm leading-relaxed text-gray-600">
-											{poi.description}
-										</p>
-									{/if}
-
-									<!-- Tags -->
-									{#if poi.tags && poi.tags.length > 0}
-										<div class="flex flex-wrap gap-1 pt-1">
-											{#each poi.tags.slice(0, 5) as tag}
-												<span class="rounded-full bg-blue-100 px-2 py-1 text-xs text-blue-700">
-													#{tag}
-												</span>
-											{/each}
-											{#if poi.tags.length > 5}
-												<span class="text-xs text-gray-500">+{poi.tags.length - 5}</span>
-											{/if}
-										</div>
-									{/if}
-								</div>
-							</div>
-						</HoverCard.Content>
-					</HoverCard.Root>
-				</Marker>
-			{/each}
-			<!-- Temporary marker for new POI -->
-			{#if tempMarkerPosition}
-				<Marker draggable lngLat={[tempMarkerPosition.lng, tempMarkerPosition.lat]}>
-					<div
-						class="flex size-10 items-center justify-center rounded-full bg-orange-500 p-2 text-white"
-					>
-						<MapPin class="size-6" stroke-width={2} />
-					</div>
-				</Marker>
-			{/if}
-			<!-- Map Controls -->
-			<NavigationControl position="top-left" />
-			<GeolocateControl position="top-left" />
-		</MapLibre>
+<div class="flex h-full w-full flex-col gap-4">
+	<!-- Header Section -->
+	<div class="space-y-2">
+		<h2 class="text-2xl font-bold text-gray-900">Points of Interest</h2>
+		<p class="text-sm text-gray-600">
+			Click anywhere on the map to create a new POI, or click an existing marker to edit it. Drag
+			markers to adjust their locations.
+		</p>
 	</div>
 
-	<!-- POI List -->
-	<div class="flex w-96 flex-col overflow-hidden rounded-lg border border-gray-300 bg-white">
-		<div class="p-3">
-			<!-- Validation Checklist -->
-			<div class="mb-3">
-				<ValidationChecklist title="Validation" checks={validationChecks} />
-			</div>
-			<h3 class="mt-3 text-lg font-semibold">Created POIs ({pois.length})</h3>
+	<!-- Location Search -->
+	<div class="relative" bind:this={searchContainerRef}>
+		<div class="flex gap-2">
+			<Input
+				type="text"
+				placeholder="Search for a location..."
+				bind:value={queryLocation}
+				autocomplete="off"
+				onkeydown={(e) => {
+					if (e.key === 'Enter') {
+						e.preventDefault();
+						searchLocation(queryLocation);
+					}
+				}}
+			/>
+			<Button
+				type="button"
+				variant="outline"
+				onclick={() => searchLocation(queryLocation)}
+				disabled={isLoadingSearch || !queryLocation.trim()}
+			>
+				{#if isLoadingSearch}
+					<Spinner />
+				{:else}
+					<Search class="size-4" />
+				{/if}
+				Search
+			</Button>
 		</div>
 
-		{#if pois.length > 0}
-			<div class="flex-1 space-y-3 overflow-y-auto px-3 pb-3">
-				{#each pois as poi (poi.id)}
-					<div
-						class="group flex flex-col overflow-hidden rounded-xl border border-gray-200 bg-white"
+		<!-- Search Results Dropdown -->
+		{#if showSearchResults && searchResults.length > 0}
+			<div
+				class="absolute z-50 mt-1 max-h-60 w-full overflow-auto rounded-md border border-gray-300 bg-white shadow-lg"
+			>
+				{#each searchResults as result (result.display_name)}
+					<button
+						type="button"
+						onclick={() => selectLocation(result)}
+						class="w-full cursor-pointer px-4 py-3 text-left hover:bg-gray-100 focus:bg-gray-100 focus:outline-none"
 					>
-						<!-- POI Image -->
-						<div class="relative h-32 overflow-hidden bg-gradient-to-br from-gray-100 to-gray-200">
-							{#if poi.image_url}
-								<img
-									src={poi.image_url}
-									alt={poi.name}
-									class="h-full w-full object-cover transition-transform duration-300"
-								/>
-							{:else}
-								<div class="flex h-full w-full items-center justify-center">
-									<MapPin class="h-12 w-12 text-gray-300" />
-								</div>
-							{/if}
-							<!-- Type Badge -->
-							<div class="absolute top-2 right-2">
-								<span
-									class="rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 capitalize"
-								>
-									{poi.type}
-								</span>
-							</div>
-						</div>
-
-						<!-- POI Content -->
-						<div class="flex flex-1 flex-col p-4">
-							<!-- POI Name -->
-							<h4 class="text-base leading-tight font-bold text-gray-900">
-								{poi.name}
-							</h4>
-
-							<!-- POI Description -->
-							<p class="line-clamp-3 flex-1 py-3 text-sm leading-relaxed text-gray-600">
-								{poi.description || 'No description provided.'}
-							</p>
-
-							<!-- Tags -->
-							{#if poi.tags && poi.tags.length > 0}
-								<div class="mb-3 flex flex-wrap gap-1">
-									{#each poi.tags.slice(0, 3) as tag}
-										<span class="rounded-full bg-blue-100 px-2 py-1 text-xs text-blue-700">
-											#{tag}
-										</span>
-									{/each}
-									{#if poi.tags.length > 3}
-										<span class="text-xs text-gray-500">+{poi.tags.length - 3}</span>
-									{/if}
-								</div>
-							{/if}
-
-							<!-- Action Buttons -->
-							<div class="flex gap-2">
-								<Button
-									variant="outline"
-									size="sm"
-									class="flex-1 text-red-600 hover:border-red-300 hover:bg-red-50 hover:text-red-700"
-									onclick={() => deletePOI(poi.id!)}
-								>
-									<Trash2 class="h-3.5 w-3.5" />
-								</Button>
-								<Button
-									variant="default"
-									size="sm"
-									class="flex-[2]"
-									onclick={() => openEditForm(poi)}
-								>
-									<SquarePen class="mr-1.5 h-3.5 w-3.5" />
-									Edit
-								</Button>
-							</div>
-						</div>
-					</div>
+						<p class="text-sm font-medium text-gray-900">{result.display_name}</p>
+					</button>
 				{/each}
 			</div>
-		{:else}
-			<div class="flex-1 px-3">
-				<p class="text-center text-gray-500">No POIs created yet. Click on the map to add one.</p>
+		{:else if showSearchResults && !isLoadingSearch && queryLocation && searchResults.length === 0}
+			<div
+				class="absolute z-50 mt-1 w-full rounded-md border border-gray-300 bg-white px-4 py-3 shadow-lg"
+			>
+				<p class="text-sm text-gray-500">No results found for "{queryLocation}"</p>
 			</div>
 		{/if}
+	</div>
 
-		<div class="p-3">
-			<div class="flex justify-end gap-2">
-				<Button variant="outline" href={`/dashboard/games/${params.id}/edit/characters`} size="lg">
-					<ArrowLeft /> Back
-				</Button>
-				<Button href={`/dashboard/games/${params.id}/edit/cards`} size="lg"
-					>Next <ArrowRight /></Button
-				>
-			</div>
+	<!-- Map Section -->
+	<div class="flex flex-1 gap-2 overflow-hidden">
+		<div class="relative z-10 flex-1 rounded-lg border border-gray-300">
+			<MapLibre
+				style="https://tiles.openfreemap.org/styles/liberty"
+				class="h-full w-full"
+				bind:map
+				zoom={14}
+				onclick={handleMapClick}
+				attributionControl={false}
+			>
+				{#each pois as poi (poi.id)}
+					{#if poiPositions[poi.id]}
+						{@const PoiIcon = getPoiIcon(poi.type)}
+						{@const poiColor = getPoiColor(poi.type)}
+						<Marker
+							draggable
+							bind:lngLat={poiPositions[poi.id]}
+							ondragstart={() => {
+								isDraggingMarker = true;
+								justFinishedDragging = false;
+							}}
+							ondragend={() => {
+								// Immediately reset drag state
+								isDraggingMarker = false;
+								justFinishedDragging = true;
+
+								// Clear the flag after a short delay to prevent accidental map clicks
+								setTimeout(() => {
+									justFinishedDragging = false;
+								}, 200);
+
+								// Update form data if this POI is being edited
+								if (editingPOI?.id === poi.id) {
+									$formData.latitude = poiPositions[poi.id].lat;
+									$formData.longitude = poiPositions[poi.id].lng;
+								} else {
+									// Auto-save position update for non-editing POIs
+									updatePOIPosition(poi.id, poiPositions[poi.id].lng, poiPositions[poi.id].lat);
+								}
+							}}
+						>
+							<HoverCard.Root openDelay={200}>
+								<HoverCard.Trigger>
+									<div
+										role="button"
+										tabindex="0"
+										onclick={(e) => {
+											e.stopPropagation();
+											if (!isDraggingMarker && !justFinishedDragging) openEditForm(poi);
+										}}
+										onkeydown={(e) => {
+											if (e.key === 'Enter' || e.key === ' ') {
+												e.preventDefault();
+												if (!isDraggingMarker && !justFinishedDragging) openEditForm(poi);
+											}
+										}}
+										class="flex cursor-pointer flex-col items-center"
+									>
+										<div
+											class="flex size-10 items-center justify-center rounded-full p-2 text-white shadow-lg ring-2 ring-white {poiColor}"
+										>
+											<PoiIcon class="size-6" stroke-width={2} />
+										</div>
+										<div
+											class="mt-1 max-w-[120px] overflow-hidden rounded-md px-2 py-1 text-xs font-semibold text-ellipsis whitespace-nowrap text-white shadow-md backdrop-blur-sm {poiColor}"
+										>
+											{poi.name}
+										</div>
+									</div>
+								</HoverCard.Trigger>
+								{#if !isFormOpen}
+									<HoverCard.Content class="w-80 overflow-hidden p-0">
+										<div class="flex flex-col">
+											<!-- POI Image -->
+											<div
+												class="relative h-32 overflow-hidden bg-gradient-to-br from-gray-100 to-gray-200"
+											>
+												{#if poi.image_url}
+													<img
+														src={poi.image_url}
+														alt={poi.name}
+														class="h-full w-full object-cover"
+													/>
+												{:else}
+													<div class="flex h-full w-full items-center justify-center">
+														<MapPin class="h-12 w-12 text-gray-300" />
+													</div>
+												{/if}
+											</div>
+
+											<!-- POI Content -->
+											<div class="space-y-2 p-4">
+												<!-- Type Badge -->
+												<span
+													class="self-start rounded-full px-2 py-0.5 text-xs font-medium uppercase {getPoiPaleBg(
+														poi.type
+													)} {getPoiTextColor(poi.type)}"
+												>
+													{poi.type}
+												</span>
+												<!-- POI Name -->
+												<h4 class="line-clamp-2 text-base leading-tight font-bold text-gray-900">
+													{poi.name}
+												</h4>
+
+												<!-- POI Description -->
+												{#if poi.description}
+													<p class="line-clamp-3 text-sm leading-relaxed text-gray-600">
+														{poi.description}
+													</p>
+												{/if}
+
+												<!-- Tags -->
+												{#if poi.tags && poi.tags.length > 0}
+													<div class="flex flex-wrap gap-1 pt-1">
+														{#each poi.tags.slice(0, 5) as tag (tag)}
+															<span
+																class="rounded-full bg-blue-100 px-2 py-1 text-xs text-blue-700"
+															>
+																#{tag}
+															</span>
+														{/each}
+														{#if poi.tags.length > 5}
+															<span class="text-xs text-gray-500">+{poi.tags.length - 5}</span>
+														{/if}
+													</div>
+												{/if}
+
+												<!-- Actions -->
+												<div class="flex gap-2 pt-2">
+													<Button
+														size="sm"
+														class="flex-1"
+														onclick={(e) => {
+															e.stopPropagation();
+															openEditForm(poi);
+														}}
+													>
+														<SquarePen class="size-3.5" /> Edit
+													</Button>
+													<Button
+														size="sm"
+														variant="destructive"
+														onclick={(e) => {
+															e.stopPropagation();
+															deletePOI(poi.id);
+														}}
+													>
+														<Trash2 class="size-3.5" />
+													</Button>
+												</div>
+											</div>
+										</div>
+									</HoverCard.Content>
+								{/if}
+							</HoverCard.Root>
+						</Marker>
+					{/if}
+				{/each}
+				<!-- Temporary marker for new POI -->
+				{#if tempMarkerPosition}
+					<Marker
+						draggable
+						bind:lngLat={tempMarkerPosition}
+						ondragstart={() => {
+							isDraggingMarker = true;
+							justFinishedDragging = false;
+						}}
+						ondragend={() => {
+							// Immediately reset drag state
+							isDraggingMarker = false;
+							justFinishedDragging = true;
+
+							// Clear the flag after a short delay
+							setTimeout(() => {
+								justFinishedDragging = false;
+							}, 200);
+
+							$formData.latitude = tempMarkerPosition!.lat;
+							$formData.longitude = tempMarkerPosition!.lng;
+						}}
+					>
+						<div class="flex flex-col items-center">
+							<div
+								class="flex size-10 items-center justify-center rounded-full bg-orange-500 p-2 text-white shadow-lg ring-2 ring-white"
+							>
+								<MapPin class="size-6" stroke-width={2} />
+							</div>
+							<div
+								class="mt-1 rounded-md bg-orange-500/95 px-2 py-1 text-xs font-semibold whitespace-nowrap text-white shadow-md backdrop-blur-sm"
+							>
+								New POI
+							</div>
+						</div>
+					</Marker>
+				{/if}
+				<!-- Starting Location Marker -->
+				{#if center}
+					<Marker lngLat={center}>
+						<Tooltip.Provider>
+							<Tooltip.Root>
+								<Tooltip.Trigger>
+									<div class="flex flex-col items-center">
+										<div
+											class="flex size-10 items-center justify-center rounded-full bg-start-red p-2 text-white shadow-lg ring-2 ring-white"
+										>
+											<Flag class="size-6" stroke-width={2} />
+										</div>
+										<div
+											class="mt-1 rounded-md bg-start-red/95 px-2 py-1 text-xs font-semibold whitespace-nowrap text-white shadow-md backdrop-blur-sm"
+										>
+											Starting Location
+										</div>
+									</div>
+								</Tooltip.Trigger>
+								<Tooltip.Content
+									>Go to General Information to edit the starting location</Tooltip.Content
+								>
+							</Tooltip.Root>
+						</Tooltip.Provider>
+					</Marker>
+				{/if}
+				<!-- Map Controls -->
+				<NavigationControl position="top-left" />
+				<GeolocateControl position="top-left" />
+			</MapLibre>
+		</div>
+	</div>
+
+	<!-- Bottom Bar -->
+	<div class="flex items-center justify-between pt-2">
+		<Button type="button" size="lg" onclick={() => (isListOpen = true)}>
+			<List class="mr-2 size-5" />
+			View POIs ({pois.length})
+		</Button>
+		<div class="flex gap-2">
+			<Button size="lg" variant="outline" href="/dashboard/games/{params.id}/edit/characters">
+				<ArrowLeft /> Back
+			</Button>
+			<Button size="lg" href="/dashboard/games/{params.id}/edit/cards">
+				Next <ArrowRight />
+			</Button>
 		</div>
 	</div>
 </div>
@@ -511,9 +802,19 @@
 <!-- Dialog Form -->
 <Sheet.Root bind:open={isFormOpen}>
 	<Sheet.Content
-		class="fixed top-0 right-0 z-50 h-full w-full max-w-md overflow-y-auto bg-white shadow-xl"
+		class="fixed top-0 right-0 z-[100] h-full w-full max-w-md overflow-y-auto bg-white shadow-xl"
+		onInteractOutside={(e) => e.preventDefault()}
 	>
 		<Sheet.Header>
+			{#if $formData.type}
+				<span
+					class="self-start rounded-full px-2 py-0.5 text-xs font-medium uppercase {getPoiPaleBg(
+						$formData.type
+					)} {getPoiTextColor($formData.type)}"
+				>
+					{$formData.type}
+				</span>
+			{/if}
 			<Sheet.Title class="text-2xl font-semibold">
 				{editingPOI?.id ? 'Edit POI' : 'Create POI'}
 			</Sheet.Title>
@@ -526,18 +827,40 @@
 		>
 			<div class="rounded-lg bg-gray-50">
 				<p class="bg-gray-50 p-3 text-sm text-gray-600">
-					<span>Location:</span>
-					{#if editingPOI}
-						{editingPOI.longitude.toFixed(6)}, {editingPOI.latitude.toFixed(6)}
-					{:else}
-						{tempMarkerPosition?.lng.toFixed(6)}, {tempMarkerPosition?.lat.toFixed(6)}
-					{/if}
+					<span class="font-semibold">Location:</span>
+					{$formData.longitude.toFixed(6)}, {$formData.latitude.toFixed(6)}
+					<span class="mt-1 block text-xs text-gray-500">Drag the marker to adjust position</span>
 				</p>
 			</div>
 
 			<Input type="hidden" name="id" bind:value={$formData.id} />
 			<Input type="hidden" name="latitude" bind:value={$formData.latitude} />
 			<Input type="hidden" name="longitude" bind:value={$formData.longitude} />
+
+			<Form.Field {form} name="radius">
+				<Form.Control>
+					{#snippet children({ props })}
+						<Form.Label>Unlock Radius</Form.Label>
+						<Form.Description>How close the player must be to unlock this POI.</Form.Description>
+						<div class="flex items-center gap-3">
+							<Slider
+								type="single"
+								min={10}
+								max={100}
+								step={1}
+								bind:value={$formData.radius}
+								class=""
+							/>
+							<span
+								class="w-16 shrink-0 text-right text-sm font-semibold text-gray-700 tabular-nums"
+								>{$formData.radius} m</span
+							>
+						</div>
+						<input type="hidden" {...props} bind:value={$formData.radius} />
+					{/snippet}
+				</Form.Control>
+				<Form.FieldErrors />
+			</Form.Field>
 
 			<Form.Field {form} name="name">
 				<Form.Control>
@@ -612,71 +935,22 @@
 			<Form.Field {form} name="image_url">
 				<Form.Control>
 					{#snippet children({ props })}
-						<Form.Label class="font-bold">POI Image</Form.Label>
-						<Form.Description>Upload an image for this point of interest.</Form.Description>
-						{#if imagePreview}
-							<div class="relative">
-								<img
-									src={imagePreview}
-									alt="Preview"
-									class="aspect-video w-full rounded-lg object-cover"
-								/>
-								{#if isUploadingImage}
-									<div
-										class="absolute inset-0 flex items-center justify-center rounded-lg bg-black/50"
-									>
-										<svg
-											class="h-8 w-8 animate-spin text-white"
-											xmlns="http://www.w3.org/2000/svg"
-											fill="none"
-											viewBox="0 0 24 24"
-										>
-											<circle
-												class="opacity-25"
-												cx="12"
-												cy="12"
-												r="10"
-												stroke="currentColor"
-												stroke-width="4"
-											></circle>
-											<path
-												class="opacity-75"
-												fill="currentColor"
-												d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-											></path>
-										</svg>
-									</div>
-								{/if}
-								<Button
-									type="button"
-									variant="destructive"
-									size="icon"
-									class="absolute top-2 right-2"
-									onclick={removeImage}
-									disabled={isUploadingImage}
-								>
-									<X class="h-4 w-4" />
-								</Button>
-							</div>
-						{:else}
-							<Label
-								for="image-upload"
-								class="flex aspect-video w-full cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed border-gray-300 transition hover:border-gray-400"
-							>
-								<Upload class="h-12 w-12 text-gray-400" />
-								<p class="mt-2 text-sm text-gray-600">Click to upload image</p>
-								<p class="text-xs text-gray-500">PNG, JPG up to 10MB</p>
-								<input
-									id="image-upload"
-									type="file"
-									accept="image/*"
-									class="hidden"
-									onchange={handleImageUpload}
-									disabled={isUploadingImage}
-								/>
-							</Label>
-						{/if}
-						<Input type="hidden" {...props} bind:value={$formData.image_url} />
+						<Form.Label class="font-semibold">POI Image</Form.Label>
+						<Form.Description
+							>Upload an image for this point of interest (16:9 ratio).</Form.Description
+						>
+						<ImageUpload
+							currentImageUrl={$formData.image_url}
+							storagePath="{session.user.id}/{params.id}/pois/{editingPOI?.id ?? 'new'}"
+							{supabase}
+							onUploaded={(url) => {
+								$formData.image_url = url;
+							}}
+							onRemoved={() => {
+								$formData.image_url = '';
+							}}
+						/>
+						<input type="hidden" {...props} bind:value={$formData.image_url} />
 					{/snippet}
 				</Form.Control>
 				<Form.FieldErrors />
@@ -713,7 +987,7 @@
 						</div>
 						{#if $formData.tags.length > 0}
 							<div class="mt-2 flex flex-wrap gap-2">
-								{#each $formData.tags as tag, index}
+								{#each $formData.tags as tag, index (tag)}
 									<Button
 										variant="ghost"
 										class="flex items-center gap-1 rounded-full bg-blue-100 px-3 py-1 text-sm text-blue-700 hover:bg-blue-50"
@@ -736,7 +1010,14 @@
 				<Button
 					type="button"
 					variant="outline"
-					onclick={() => ((isFormOpen = false), (tempMarkerPosition = null))}>Cancel</Button
+					onclick={() => {
+						// Restore previous position if editing an existing POI
+						if (editingPOI?.id && previousEditingPOIPosition) {
+							poiPositions[editingPOI.id] = previousEditingPOIPosition;
+						}
+						isFormOpen = false;
+						tempMarkerPosition = null;
+					}}>Cancel</Button
 				>
 				<Button type="submit" disabled={$delayed}>
 					{#if $delayed}
@@ -752,3 +1033,152 @@
 		</form>
 	</Sheet.Content>
 </Sheet.Root>
+
+<!-- POI List Drawer -->
+<Drawer.Root bind:open={isListOpen} direction="bottom">
+	<Drawer.Content class="max-h-[85vh]">
+		<Drawer.Header>
+			<Drawer.Title class="text-2xl font-semibold">Created POIs ({pois.length})</Drawer.Title>
+		</Drawer.Header>
+		<div class="max-h-[calc(85vh-80px)] overflow-y-auto px-4 pb-4">
+			<div class="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+				{#if pois.length === 0}
+					<div class="col-span-full py-12 text-center">
+						<MapPin class="mx-auto mb-4 size-12 text-gray-400" />
+						<p class="text-lg font-medium text-gray-600">No POIs created yet</p>
+						<p class="text-sm text-gray-500">Click on the map to create your first POI</p>
+					</div>
+				{:else}
+					{#each pois as poi (poi.id)}
+						<button
+							type="button"
+							onclick={() => {
+								// Fly to POI on map
+								if (map && poiPositions[poi.id]) {
+									map.flyTo({
+										center: [poiPositions[poi.id].lng, poiPositions[poi.id].lat],
+										zoom: 16,
+										duration: 1000
+									});
+									isListOpen = false;
+								}
+							}}
+							class="group relative overflow-hidden rounded-lg border border-gray-200 bg-white text-left shadow-sm transition hover:shadow-md"
+						>
+							<!-- POI Image -->
+							<div
+								class="relative h-40 overflow-hidden bg-gradient-to-br from-gray-100 to-gray-200"
+							>
+								{#if poi.image_url}
+									<img
+										src={poi.image_url}
+										alt={poi.name}
+										class="h-full w-full object-cover transition group-hover:scale-105"
+									/>
+								{:else}
+									<div class="flex h-full w-full items-center justify-center">
+										<MapPin class="size-12 text-gray-300" />
+									</div>
+								{/if}
+							</div>
+
+							<!-- POI Content -->
+							<div class="space-y-2 p-4">
+								<!-- Type Badge -->
+								<span
+									class="self-start rounded-full px-2 py-0.5 text-xs font-medium uppercase {getPoiPaleBg(
+										poi.type
+									)} {getPoiTextColor(poi.type)}"
+								>
+									{poi.type}
+								</span>
+								<h3 class="line-clamp-1 text-lg font-bold text-gray-900">{poi.name}</h3>
+								{#if poi.description}
+									<p class="line-clamp-2 text-sm text-gray-600">{poi.description}</p>
+								{/if}
+							</div>
+
+							<!-- Action Buttons -->
+							<div class="flex gap-2 border-t border-gray-100 p-3">
+								<Button
+									type="button"
+									size="sm"
+									class="flex-1"
+									onclick={(e) => {
+										e.stopPropagation();
+										openEditForm(poi);
+										isListOpen = false;
+									}}
+								>
+									<SquarePen class="mr-1 size-4" />
+									Edit
+								</Button>
+								<Button
+									type="button"
+									size="sm"
+									variant="destructive"
+									onclick={(e) => {
+										e.stopPropagation();
+										if (poi.id) deletePOI(poi.id);
+									}}
+								>
+									<Trash2 class="size-4" />
+								</Button>
+							</div>
+						</button>
+					{/each}
+				{/if}
+			</div>
+		</div>
+	</Drawer.Content>
+</Drawer.Root>
+
+<style>
+	/* Hide the sheet overlay to allow map interaction */
+	:global([data-slot='sheet-overlay']) {
+		display: none !important;
+	}
+
+	/* Only make HoverCard portals transparent, not all portals */
+	:global([data-bits-hover-card-content]) {
+		pointer-events: auto !important;
+	}
+
+	/* Make the portal wrapper for HoverCard transparent */
+	:global([data-portal]:has([data-bits-hover-card-content])) {
+		pointer-events: none !important;
+	}
+
+	/* Ensure sheet content and all interactive elements receive pointer events */
+	:global([data-slot='sheet-content']),
+	:global([data-slot='sheet-content'] *) {
+		pointer-events: auto !important;
+	}
+
+	/* Ensure select dropdowns receive pointer events */
+	:global([data-bits-menu-content]),
+	:global([data-bits-select-content]),
+	:global([data-bits-select-content] *),
+	:global([role='listbox']),
+	:global([role='listbox'] *) {
+		pointer-events: auto !important;
+		z-index: 9999 !important;
+	}
+
+	/* Ensure map and all its children receive pointer events */
+	:global(.maplibregl-map),
+	:global(.maplibregl-canvas-container),
+	:global(.maplibregl-canvas) {
+		pointer-events: auto !important;
+	}
+
+	/* Ensure map markers and their children are interactive and have proper layering */
+	:global(.maplibregl-marker),
+	:global(.maplibregl-marker *) {
+		pointer-events: auto !important;
+	}
+
+	:global(.maplibregl-marker) {
+		z-index: 50 !important;
+	}
+</style>

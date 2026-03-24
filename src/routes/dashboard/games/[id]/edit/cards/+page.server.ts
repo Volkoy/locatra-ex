@@ -2,62 +2,17 @@ import type { PageServerLoad, Actions } from './$types';
 import { superValidate } from 'sveltekit-superforms';
 import { zod4 } from 'sveltekit-superforms/adapters';
 import { cardSchema } from '$lib/zod/schema';
-import { fail, redirect } from '@sveltejs/kit';
+import { fail } from '@sveltejs/kit';
 
-export const load: PageServerLoad = async ({ params, locals: { supabase, safeGetSession } }) => {
-    const { session } = await safeGetSession();
-    
-    if (!session) {
-        throw redirect(303, '/auth');
-    }
-
-    // Verify game ownership
-    const { data: game, error: gameError } = await supabase
-        .from('games')
-        .select('id, game_id')
-        .eq('game_id', params.id)
-        .eq('owner_id', session.user.id)
-        .single();
-
-    if (gameError || !game) {
-        throw redirect(303, '/dashboard');
-    }
-
-    // Fetch cards for this game
-    const { data: cards, error: cardsError } = await supabase
-        .from('cards')
-        .select('*')
-        .eq('game_id', game.id)
-        .order('created_at', { ascending: true });
-
-    if (cardsError) {
-        console.error('Error fetching cards:', cardsError);
-    }
-
-    // Fetch POIs for this game
-    const { data: pois, error: poisError } = await supabase
-        .from('pois')
-        .select('id, name')
-        .eq('game_id', game.id)
-        .order('name', { ascending: true });
-
-    if (poisError) {
-        console.error('Error fetching POIs:', poisError);
-    }
-
+export const load: PageServerLoad = async ({ parent }) => {
+    const { game, cards, pois } = await parent();
     const form = await superValidate(zod4(cardSchema));
-
-    return {
-        form,
-        cards: cards || [],
-        pois: pois || [],
-        gameId: game.id
-    };
+    return { form, cards, pois, gameId: game.id };
 };
 
 export const actions = {
-    create: async ({ request, params, locals: { supabase, safeGetSession } }) => {
-        const { session } = await safeGetSession();
+    create: async ({ request, params, locals: { supabase, getSession } }) => {
+        const session = await getSession();
         
         if (!session) {
             return fail(401, { message: 'Unauthorized' });
@@ -103,8 +58,8 @@ export const actions = {
         return { form, success: true };
     },
 
-    update: async ({ request, params, locals: { supabase, safeGetSession } }) => {
-        const { session } = await safeGetSession();
+    update: async ({ request, params, locals: { supabase, getSession } }) => {
+        const session = await getSession();
         
         if (!session) {
             return fail(401, { message: 'Unauthorized' });
@@ -156,8 +111,8 @@ export const actions = {
         return { form, success: true };
     },
 
-    delete: async ({ request, params, locals: { supabase, safeGetSession } }) => {
-        const { session } = await safeGetSession();
+    delete: async ({ request, params, locals: { supabase, getSession } }) => {
+        const session = await getSession();
         
         if (!session) {
             return fail(401, { message: 'Unauthorized' });
@@ -191,6 +146,64 @@ export const actions = {
         if (error) {
             console.error('Error deleting card:', error);
             return fail(500, { message: 'Failed to delete card: ' + error.message });
+        }
+
+        return { success: true };
+    },
+
+    duplicate: async ({ request, params, locals: { supabase, getSession } }) => {
+        const session = await getSession();
+
+        if (!session) {
+            return fail(401, { message: 'Unauthorized' });
+        }
+
+        const formData = await request.formData();
+        const cardId = formData.get('cardId');
+
+        if (!cardId || isNaN(Number(cardId))) {
+            return fail(400, { message: 'Valid card ID is required' });
+        }
+
+        const { data: game } = await supabase
+            .from('games')
+            .select('id')
+            .eq('game_id', params.id)
+            .eq('owner_id', session.user.id)
+            .single();
+
+        if (!game) {
+            return fail(403, { message: 'Game not found' });
+        }
+
+        const { data: sourceCard } = await supabase
+            .from('cards')
+            .select('*')
+            .eq('id', Number(cardId))
+            .eq('game_id', game.id)
+            .single();
+
+        if (!sourceCard) {
+            return fail(404, { message: 'Card not found' });
+        }
+
+        const { error } = await supabase
+            .from('cards')
+            .insert({
+                game_id: game.id,
+                title: `Copy of ${sourceCard.title}`,
+                prompt: sourceCard.prompt,
+                type: sourceCard.type,
+                hero_steps: sourceCard.hero_steps,
+                character_category: sourceCard.character_category,
+                card_category: sourceCard.card_category,
+                keywords: sourceCard.keywords,
+                poi_id: sourceCard.poi_id
+            });
+
+        if (error) {
+            console.error('Error duplicating card:', error);
+            return fail(500, { message: 'Failed to duplicate card: ' + error.message });
         }
 
         return { success: true };

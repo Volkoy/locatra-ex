@@ -1,102 +1,14 @@
-import { redirect, fail } from '@sveltejs/kit';
+import { fail, redirect } from '@sveltejs/kit';
 import type { PageServerLoad, Actions } from './$types';
 
-export const load: PageServerLoad = async ({ params, locals: { supabase, safeGetSession } }) => {
-
-    const { session } = await safeGetSession();
-    
-    if (!session) {
-        throw redirect(303, '/auth');
-    }
-
-    // Fetch game data
-    const { data: game, error: gameError } = await supabase
-        .from('games')
-        .select('*')
-        .eq('game_id', params.id)
-        .eq('owner_id', session.user.id)
-        .single();
-
-    if (gameError || !game) {
-        throw redirect(303, '/dashboard');
-    }
-
-    // Use RPC function to get location coordinates from PostGIS
-    let locationData = null;
-    if (game.id && game.location) {
-        try {
-            const { data: locationResult, error: locationError } = await supabase
-                .rpc('get_game_location', { game_id_param: game.id });
-            
-            if (!locationError && locationResult && typeof locationResult === 'object') {
-                const coords = locationResult as { longitude: number; latitude: number };
-                locationData = {
-                    lng: coords.longitude,
-                    lat: coords.latitude,
-                    address: ''
-                };
-            }
-        } catch (err) {
-            console.error('Error fetching game location:', err);
-            // locationData remains null
-        }
-    }
-
-    // Fetch characters
-    const { data: characters } = await supabase
-        .from('characters')
-        .select('*')
-        .eq('game_id', game.id)
-        .order('created_at', { ascending: true });
-
-    // Use RPC function to get POIs with location coordinates from PostGIS
-    let poisWithLocation = [];
-    try {
-        const { data: poisData, error: poisError } = await supabase
-            .rpc('get_game_pois_with_location', { game_id_param: game.id });
-        
-        if (!poisError && poisData) {
-            poisWithLocation = poisData;
-        }
-    } catch (err) {
-        console.error('Error fetching POIs with location:', err);
-        // Fall back to regular POI fetch
-        const { data: regularPois } = await supabase
-            .from('pois')
-            .select('*')
-            .eq('game_id', game.id)
-            .order('created_at', { ascending: true });
-        
-        poisWithLocation = regularPois || [];
-    }
-
-    // Fetch Cards
-    const { data: cards } = await supabase
-        .from('cards')
-        .select('*')
-        .eq('game_id', game.id)
-        .order('created_at', { ascending: true });
-
-    // Fetch AI Config
-    const { data: aiConfig } = await supabase
-        .from('ai_companion_configs')
-        .select('*')
-        .eq('game_id', game.id)
-        .single();
-
-    return {
-        game,
-        locationData,
-        characters: characters || [],
-        pois: poisWithLocation,
-        cards: cards || [],
-        aiConfig: aiConfig || null
-    };
+export const load: PageServerLoad = async ({ parent }) => {
+    const { game, characters, pois, cards, aiConfig } = await parent();
+    return { game, characters, pois, cards, aiConfig };
 };
 
 export const actions: Actions = {
-    publish: async ({ params, locals: { supabase, safeGetSession } }) => {
-        const { session } = await safeGetSession();
+    publish: async ({ params, locals: { supabase, getSession } }) => {
+        const session = await getSession();
         
         if (!session) {
             return fail(401, { error: 'Unauthorized' });
@@ -114,12 +26,6 @@ export const actions: Actions = {
             return fail(404, { error: 'Game not found' });
         }
 
-        // Validation constants
-        const MIN_CHARACTERS = 2;
-        const MIN_POIS = 6;
-        const MIN_CARDS = 10;
-        const ALL_HERO_STEPS = 6;
-
         const validationErrors: string[] = [];
 
         // Validate general information
@@ -136,11 +42,16 @@ export const actions: Actions = {
         // Validate characters
         const { data: characters, error: charsError } = await supabase
             .from('characters')
-            .select('id')
+            .select('id, category')
             .eq('game_id', game.id);
 
-        if (charsError || !characters || characters.length < MIN_CHARACTERS) {
-            validationErrors.push(`At least ${MIN_CHARACTERS} characters are required`);
+        if (charsError || !characters || characters.length < 2) {
+            validationErrors.push('At least 2 characters are required');
+        } else {
+            const humanCount = characters.filter(c => c.category === 'human').length;
+            const nonHumanCount = characters.filter(c => c.category === 'non-human').length;
+            if (humanCount < 1) validationErrors.push('At least 1 human character is required');
+            if (nonHumanCount < 1) validationErrors.push('At least 1 non-human character is required');
         }
 
         // Validate POIs
@@ -149,29 +60,41 @@ export const actions: Actions = {
             .select('id')
             .eq('game_id', game.id);
 
-        if (poisError || !pois || pois.length < MIN_POIS) {
-            validationErrors.push(`At least ${MIN_POIS} POIs are required`);
+        if (poisError || !pois || pois.length < 6) {
+            validationErrors.push('At least 6 POIs are required');
         }
 
-        // Validate cards and hero's journey steps
+        // Validate cards — coverage-based: all 6 steps for both human and non-human
         const { data: cards, error: cardsError } = await supabase
             .from('cards')
-            .select('id, hero_steps')
+            .select('id, hero_steps, character_category')
             .eq('game_id', game.id);
 
-        if (cardsError || !cards || cards.length < MIN_CARDS) {
-            validationErrors.push(`At least ${MIN_CARDS} cards are required`);
-        }
-
-        // Validate all 6 hero's journey steps are covered
-        if (cards && cards.length >= MIN_CARDS) {
-            const allSteps = new Set<string>();
+        if (cardsError || !cards) {
+            validationErrors.push('Failed to load cards');
+        } else {
+            const heroSteps = [
+                'call_to_adventure', 'crossing_the_threshold', 'meeting_the_mentor',
+                'trials_and_growth', 'death_and_transformation', 'change_and_return'
+            ];
+            const humanCoverage = new Set<string>();
+            const nonHumanCoverage = new Set<string>();
             cards.forEach(card => {
-                card.hero_steps?.forEach((step: string) => allSteps.add(step));
+                const cat = card.character_category as string;
+                const coversHuman = cat === 'human' || cat === 'both';
+                const coversNonHuman = cat === 'non-human' || cat === 'both';
+                (card.hero_steps as string[] ?? []).forEach(step => {
+                    if (coversHuman) humanCoverage.add(step);
+                    if (coversNonHuman) nonHumanCoverage.add(step);
+                });
             });
-
-            if (allSteps.size < ALL_HERO_STEPS) {
-                validationErrors.push(`All ${ALL_HERO_STEPS} hero's journey steps must be covered`);
+            const humanMissing = heroSteps.filter(s => !humanCoverage.has(s));
+            const nonHumanMissing = heroSteps.filter(s => !nonHumanCoverage.has(s));
+            if (humanMissing.length > 0) {
+                validationErrors.push(`Human player journey steps missing: ${humanMissing.map(s => s.replace(/_/g, ' ')).join(', ')}`);
+            }
+            if (nonHumanMissing.length > 0) {
+                validationErrors.push(`Non-human player journey steps missing: ${nonHumanMissing.map(s => s.replace(/_/g, ' ')).join(', ')}`);
             }
         }
 
@@ -228,5 +151,25 @@ export const actions: Actions = {
         }
 
         throw redirect(303, '/dashboard');
+    },
+
+    unpublish: async ({ params, locals: { supabase, getSession } }) => {
+        const session = await getSession();
+
+        if (!session) {
+            return fail(401, { error: 'Unauthorized' });
+        }
+
+        const { error } = await supabase
+            .from('games')
+            .update({ status: 'draft', visibility: 'private' })
+            .eq('game_id', params.id)
+            .eq('owner_id', session.user.id);
+
+        if (error) {
+            return fail(500, { error: 'Failed to unpublish game' });
+        }
+
+        throw redirect(303, `/dashboard/games/${params.id}/edit/review`);
     }
 };
