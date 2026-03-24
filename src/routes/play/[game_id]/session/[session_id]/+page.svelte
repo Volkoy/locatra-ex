@@ -4,8 +4,7 @@
 	import { enhance } from '$app/forms';
 	import type { ActionResult } from '@sveltejs/kit';
 	import { goto } from '$app/navigation';
-	import { MapLibre, Marker, GeolocateControl } from 'svelte-maplibre';
-	import type { Map } from 'maplibre-gl';
+	import { MapLibre, Marker } from 'svelte-maplibre';
 	import { Button } from '$lib/components/ui/button';
 	import { Textarea } from '$lib/components/ui/textarea';
 	import {
@@ -170,17 +169,20 @@
 	// GPS state
 	let userLocation = $state<{ lng: number; lat: number } | null>(null);
 	const nearbyPoiIds = new SvelteSet<number>();
+	let isGpsTracking = $state(false);
+	let lastFixTimestamp = $state<number | null>(null);
+	let lastFixAccuracy = $state<number | null>(null);
 	let heading = $state<number | null>(null);
-	// eslint-disable-next-line @typescript-eslint/no-explicit-any
-	let geolocateControl = $state<any>(undefined);
-	let mapLoaded = $state(false);
-	let map = $state<Map | undefined>(undefined);
+	let gpsWatchId = $state<number | null>(null);
+	let hasCenteredOnUser = $state(false);
 	// Stored once — map owns its position after initial mount; prevents re-centering on data updates
 	let mapCenter = $state<[number, number]>(
 		data.gameLocation ? [data.gameLocation.longitude, data.gameLocation.latitude] : [0, 0]
 	);
 
 	// ── Progress & goal (depend on nearbyPoiIds) ──────────────────────────────
+	const MAX_FIX_AGE_MS = 4000;
+	const MAX_UNLOCK_ACCURACY_METERS = 50;
 
 	// 0 = intro, 1–6 = steps, 7 = reflection
 	let currentProgressIndex = $derived.by(() => {
@@ -201,9 +203,6 @@
 	}
 	const _saved = readUnlockCache();
 	let selectedPoiId = $state<number | null>(_saved?.selectedPoiId ?? null);
-	const nearbyPoiId = $derived(
-		session.play_mode === 'remote' ? selectedPoiId : ([...nearbyPoiIds][0] ?? null)
-	);
 
 	// Distance/bearing to game starting location (used during intro phase)
 	let gameLocationDistance = $derived(
@@ -222,12 +221,71 @@
 	let selectedCard = $state<Card | null>(_saved?.selectedCard ?? null);
 	let canDeepen = $state<boolean>(_saved?.canDeepen ?? false);
 
+	let selectedPoiDistance = $derived.by(() => {
+		if (session.play_mode !== 'gps' || selectedPoiId === null || userLocation === null) return null;
+		const poi = (pois as Poi[]).find((p) => p.id === selectedPoiId);
+		if (!poi) return null;
+		return haversineMeters(userLocation, poi);
+	});
+
+	let hasFreshAccurateFix = $derived.by(() => {
+		if (session.play_mode !== 'gps') return true;
+		if (!isGpsTracking || userLocation === null || lastFixTimestamp === null) return false;
+		const age = Date.now() - lastFixTimestamp;
+		if (age > MAX_FIX_AGE_MS) return false;
+		if (lastFixAccuracy !== null && lastFixAccuracy > MAX_UNLOCK_ACCURACY_METERS) return false;
+		return true;
+	});
+
+	let isSelectedPoiInRange = $derived.by(() => {
+		if (session.play_mode !== 'gps') return false;
+		if (!hasFreshAccurateFix || selectedPoiDistance === null || selectedPoiId === null)
+			return false;
+		const poi = (pois as Poi[]).find((p) => p.id === selectedPoiId);
+		if (!poi) return false;
+
+		// Conservative unlock gating: hide the unlock UI unless the entire uncertainty circle
+		// is inside the POI radius.
+		if (lastFixAccuracy === null) return false;
+		return selectedPoiDistance + lastFixAccuracy <= (poi.radius ?? 50);
+	});
+
+	const nearbyPoiId = $derived.by(() => {
+		// During introduction, the companion should not react to POI context yet.
+		if (!hasIntroduction) return null;
+		if (session.play_mode === 'remote') return selectedPoiId;
+		return isSelectedPoiInRange ? selectedPoiId : null;
+	});
+
 	let canUnlock = $derived(
 		hasIntroduction &&
 			selectedPoiId !== null &&
 			!(visitedPoiIds as number[]).includes(selectedPoiId) &&
-			(session.play_mode === 'remote' || nearbyPoiIds.has(selectedPoiId))
+			(session.play_mode === 'remote' ? true : isSelectedPoiInRange)
 	);
+
+	let selectedPoiRadius = $derived.by(() => {
+		if (selectedPoiId === null) return null;
+		const poi = (pois as Poi[]).find((p) => p.id === selectedPoiId);
+		return poi?.radius ?? 50;
+	});
+
+	let selectedPoiDistanceMeters = $derived(
+		session.play_mode === 'gps' && selectedPoiDistance !== null
+			? Math.round(selectedPoiDistance)
+			: null
+	);
+
+	let gpsStatus = $derived.by(() => {
+		if (session.play_mode !== 'gps') return { label: null, className: '' };
+		if (!isGpsTracking) {
+			return { label: 'GPS off', className: 'bg-red-100 text-red-700' };
+		}
+		if (!hasFreshAccurateFix) {
+			return { label: 'GPS syncing', className: 'bg-yellow-100 text-yellow-800' };
+		}
+		return { label: 'GPS live', className: 'bg-green-100 text-green-700' };
+	});
 
 	let currentGoal = $derived.by(() => {
 		if (reflectionSegment) return { text: 'Your story is complete.', icon: CheckCheck };
@@ -240,6 +298,8 @@
 		}
 		if (selectedCard) return { text: 'Write the next part of your story.', icon: PenLine };
 		if (canUnlock) return { text: 'Unlock the location to continue.', icon: LockOpen };
+		if (session.play_mode === 'gps' && selectedPoiId !== null)
+			return { text: 'Move closer to a POI to unlock.', icon: Navigation2 };
 		if (session.play_mode === 'gps' && nearbyPoiIds.size === 0)
 			return { text: 'Go to the next location.', icon: Navigation2 };
 		if (session.play_mode === 'remote' && !selectedPoiId)
@@ -267,23 +327,26 @@
 		});
 	});
 
-	// Listen to GeolocateControl position updates → update userLocation + nearbyPoiIds
-	$effect(() => {
-		if (!geolocateControl) return;
-		geolocateControl.on('geolocate', updateNearby);
-		return () => geolocateControl?.off('geolocate', updateNearby);
-	});
+	function handleGpsPosition(pos: GeolocationPosition) {
+		isGpsTracking = true;
+		lastFixTimestamp = pos.timestamp ?? Date.now();
+		lastFixAccuracy = pos.coords.accuracy ?? null;
+		updateNearby(pos);
 
-	// Auto-trigger tracking once the map is loaded and control is ready (GPS mode only).
-	// Plain variable (not $state) so re-runs of this effect don't call trigger() a second time,
-	// which would toggle tracking OFF.
-	let geolocateTriggered = false;
-	$effect(() => {
-		if (!geolocateControl || !mapLoaded || session.play_mode !== 'gps' || geolocateTriggered)
-			return;
-		geolocateTriggered = true;
-		geolocateControl.trigger();
-	});
+		if (!hasCenteredOnUser) {
+			mapCenter = [pos.coords.longitude, pos.coords.latitude];
+			hasCenteredOnUser = true;
+		}
+	}
+
+	function handleGpsError() {
+		isGpsTracking = false;
+		userLocation = null;
+		heading = null;
+		lastFixTimestamp = null;
+		lastFixAccuracy = null;
+		nearbyPoiIds.clear();
+	}
 
 	let segmentType = $state<'step' | 'deepening'>('step');
 	let isUnlocking = $state(false);
@@ -469,9 +532,10 @@
 		const nearbyUnvisited = (pois as Poi[]).filter(
 			(p) => nearbyPoiIds.has(p.id) && !(visitedPoiIds as number[]).includes(p.id)
 		);
-		if (!nearbyUnvisited.length || !userLocation) return;
+		const location = userLocation;
+		if (!nearbyUnvisited.length || !location) return;
 		const closest = nearbyUnvisited.reduce((a, b) =>
-			haversineMeters(userLocation, a) <= haversineMeters(userLocation, b) ? a : b
+			haversineMeters(location, a) <= haversineMeters(location, b) ? a : b
 		);
 		if (selectedPoiId !== closest.id) selectedPoiId = closest.id;
 	});
@@ -487,6 +551,14 @@
 
 	onMount(() => {
 		if (session.play_mode === 'gps') {
+			if (typeof navigator !== 'undefined' && navigator.geolocation) {
+				gpsWatchId = navigator.geolocation.watchPosition(handleGpsPosition, handleGpsError, {
+					enableHighAccuracy: true,
+					maximumAge: 0,
+					timeout: 15000
+				});
+			}
+
 			// Compass / heading — drives the compass needle UI (heading state only).
 			// Register both absolute (Android/real device) and relative (Chrome DevTools simulation).
 			type IOSDeviceOrientationEvent = typeof DeviceOrientationEvent & {
@@ -536,6 +608,10 @@
 
 	onDestroy(() => {
 		if (typeof window === 'undefined') return;
+		if (gpsWatchId !== null && typeof navigator !== 'undefined' && navigator.geolocation) {
+			navigator.geolocation.clearWatch(gpsWatchId);
+			gpsWatchId = null;
+		}
 		window.removeEventListener(
 			'deviceorientationabsolute',
 			handleOrientation as EventListener,
@@ -652,9 +728,7 @@
 		attributionControl={false}
 		bind:center={mapCenter}
 		zoom={gameLocation ? 14 : 10}
-		bind:map
 		bind:bearing={mapBearing}
-		bind:loaded={mapLoaded}
 	>
 		{#if gameLocation}
 			<Marker lngLat={[gameLocation.longitude, gameLocation.latitude]}>
@@ -690,7 +764,7 @@
 					>
 						<PoiIcon class="size-6" strokeWidth={2} />
 					</button>
-					{#if nearbyPoiIds.has(poi.id)}
+					{#if nearbyPoiIds.has(poi.id) || isSelected}
 						<span
 							class="rounded-full px-2 py-0.5 text-xs font-semibold whitespace-nowrap text-white shadow-md {poiColor}"
 						>
@@ -701,27 +775,15 @@
 			</Marker>
 		{/each}
 
-		{#if session.play_mode === 'gps'}
-			<GeolocateControl
-				trackUserLocation={true}
-				showAccuracyCircle={false}
-				positionOptions={{ enableHighAccuracy: true, maximumAge: 0 }}
-				bind:control={geolocateControl}
-				position="bottom-right"
-			/>
+		{#if userLocation}
+			<Marker lngLat={[userLocation.lng, userLocation.lat]}>
+				<div class="relative flex items-center justify-center">
+					<span class="absolute inline-flex size-8 animate-ping rounded-full bg-blue-500/40"></span>
+					<div class="relative h-4 w-4 rounded-full border-2 border-white bg-blue-500 shadow"></div>
+				</div>
+			</Marker>
 		{/if}
 	</MapLibre>
-
-	<!-- ── Custom locate button (GPS mode) ───────────────────────────── -->
-	{#if session.play_mode === 'gps'}
-		<button
-			onclick={() => geolocateControl?.trigger()}
-			class="absolute top-1/2 right-4 z-[25] flex size-11 -translate-y-1/2 items-center justify-center rounded-full bg-white shadow-lg transition-colors hover:bg-white/90 active:bg-white/80"
-			aria-label="Center on my location"
-		>
-			<Navigation2 class="size-5 text-dark-green" />
-		</button>
-	{/if}
 
 	<!-- ── Gradient vignettes ──────────────────────────────────────────── -->
 	<div
@@ -847,6 +909,14 @@
 
 		<!-- Step title + goal -->
 		<div class="my-2 flex flex-col items-center gap-2 text-center">
+			{#if gpsStatus.label}
+				<div
+					class="flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold {gpsStatus.className}"
+				>
+					<span class="h-2 w-2 rounded-full bg-current opacity-80"></span>
+					<span>{gpsStatus.label}</span>
+				</div>
+			{/if}
 			<p class="text-lg font-bold text-white">{currentStepTitle}</p>
 			<div
 				class="flex items-center gap-1.5 rounded-full bg-white px-3 py-1 text-sm font-medium text-dark-green"
@@ -965,6 +1035,14 @@
 			class="absolute right-0 left-0 z-20 flex flex-col items-center gap-2 transition-[bottom] duration-300"
 			style="bottom: {sheetBottomStyle}"
 		>
+			{#if selectedPoiId !== null && selectedPoiDistanceMeters !== null && selectedPoiRadius !== null}
+				<div
+					class="rounded-full border border-dark-green/20 bg-white/95 px-3 py-1 text-xs font-semibold text-dark-green shadow"
+				>
+					{selectedPoi?.name ?? 'Selected location'}: {selectedPoiDistanceMeters}m / {selectedPoiRadius}m
+				</div>
+			{/if}
+
 			<!-- Navigation icon + distance -->
 			{#if relativeBearing !== null || nearestDistance !== null}
 				<div
