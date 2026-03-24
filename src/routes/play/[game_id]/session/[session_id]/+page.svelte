@@ -40,7 +40,14 @@
 		card_id: number | null;
 		content: string;
 	};
-	type Poi = { id: number; name: string; longitude: number; latitude: number; radius?: number; type?: string };
+	type Poi = {
+		id: number;
+		name: string;
+		longitude: number;
+		latitude: number;
+		radius?: number;
+		type?: string;
+	};
 	type Card = { id: number; title: string | null; prompt: string | null; type: string | null };
 
 	const getCardHeaderBg = (type: string | null) => {
@@ -91,7 +98,7 @@
 		session_id
 	} = $derived(data);
 
-const HERO_STEPS = [
+	const HERO_STEPS = [
 		'call_to_adventure',
 		'crossing_the_threshold',
 		'meeting_the_mentor',
@@ -300,7 +307,10 @@ const HERO_STEPS = [
 	let chatIsOpen = $state(false);
 	let chatMessages = $state<ChatMessage[]>([]);
 	let chatIsLoading = $state(false);
-	let aiChatRef = $state<{ send: (text: string) => Promise<void>; commentOnSegment: (content: string) => Promise<void> } | null>(null);
+	let aiChatRef = $state<{
+		send: (text: string) => Promise<void>;
+		commentOnSegment: (content: string) => Promise<void>;
+	} | null>(null);
 
 	// Scroll refs
 	let scrollContainer = $state<HTMLElement | null>(null);
@@ -356,6 +366,24 @@ const HERO_STEPS = [
 				return 'bg-landmark-green';
 			default:
 				return 'bg-blue-600';
+		}
+	};
+
+	// Returns full !important override strings so Tailwind JIT includes them at build time
+	const getPoiOverrideColor = (type?: string): string => {
+		switch (type) {
+			case 'nature':
+				return '!bg-nature-green';
+			case 'history':
+				return '!bg-history-yellow';
+			case 'sense':
+				return '!bg-purple-600';
+			case 'action':
+				return '!bg-sense-red';
+			case 'landmark':
+				return '!bg-landmark-green';
+			default:
+				return '';
 		}
 	};
 
@@ -461,11 +489,15 @@ const HERO_STEPS = [
 		if (session.play_mode === 'gps') {
 			// Compass / heading — drives the compass needle UI (heading state only).
 			// Register both absolute (Android/real device) and relative (Chrome DevTools simulation).
-			type IOSDeviceOrientationEvent = typeof DeviceOrientationEvent & { requestPermission?: () => Promise<string> };
-			if (typeof (DeviceOrientationEvent as IOSDeviceOrientationEvent).requestPermission === 'function') {
+			type IOSDeviceOrientationEvent = typeof DeviceOrientationEvent & {
+				requestPermission?: () => Promise<string>;
+			};
+			if (
+				typeof (DeviceOrientationEvent as IOSDeviceOrientationEvent).requestPermission ===
+				'function'
+			) {
 				// iOS 13+
-				(DeviceOrientationEvent as IOSDeviceOrientationEvent)
-					.requestPermission!()
+				(DeviceOrientationEvent as IOSDeviceOrientationEvent).requestPermission!()
 					.then((state: string) => {
 						if (state === 'granted') {
 							window.addEventListener(
@@ -516,9 +548,7 @@ const HERO_STEPS = [
 	// ── Derived locations ────────────────────────────────────────────────────
 
 	let selectedPoi = $derived((pois as Poi[]).find((p) => p.id === selectedPoiId) ?? null);
-	const nearestPoiColor = $derived(
-		selectedPoi?.type ? getPoiMarkerColor(selectedPoi.type) : ''
-	);
+	const nearestPoiOverrideColor = $derived(getPoiOverrideColor(selectedPoi?.type));
 
 	let nearestUnvisited = $derived.by((): Poi | null => {
 		const unvisited = (pois as Poi[]).filter((p) => !(visitedPoiIds as number[]).includes(p.id));
@@ -580,7 +610,6 @@ const HERO_STEPS = [
 		});
 	}
 
-
 	// ── Map interaction ──────────────────────────────────────────────────────
 
 	function handlePoiClick(poiId: number) {
@@ -612,10 +641,10 @@ const HERO_STEPS = [
 		};
 	}
 
-	const sheetBottomStyle = $derived(sheetOpen ? 'calc(72vh + 8px)' : '64px');
+	const sheetBottomStyle = $derived(sheetOpen ? 'calc(72dvh + 8px)' : '64px');
 </script>
 
-<div class="relative h-screen w-full overflow-hidden">
+<div class="relative h-dvh w-full overflow-hidden">
 	<!-- Map -->
 	<MapLibre
 		style="https://tiles.openfreemap.org/styles/liberty"
@@ -662,7 +691,9 @@ const HERO_STEPS = [
 						<PoiIcon class="size-6" strokeWidth={2} />
 					</button>
 					{#if nearbyPoiIds.has(poi.id)}
-						<span class="whitespace-nowrap rounded-full bg-white px-2 py-0.5 text-xs font-semibold text-dark-green shadow-md">
+						<span
+							class="rounded-full px-2 py-0.5 text-xs font-semibold whitespace-nowrap text-white shadow-md {poiColor}"
+						>
 							{poi.name}
 						</span>
 					{/if}
@@ -685,7 +716,7 @@ const HERO_STEPS = [
 	{#if session.play_mode === 'gps'}
 		<button
 			onclick={() => geolocateControl?.trigger()}
-			class="absolute right-4 top-1/2 z-[25] flex size-11 -translate-y-1/2 items-center justify-center rounded-full bg-white shadow-lg transition-colors hover:bg-white/90 active:bg-white/80"
+			class="absolute top-1/2 right-4 z-[25] flex size-11 -translate-y-1/2 items-center justify-center rounded-full bg-white shadow-lg transition-colors hover:bg-white/90 active:bg-white/80"
 			aria-label="Center on my location"
 		>
 			<Navigation2 class="size-5 text-dark-green" />
@@ -966,7 +997,7 @@ const HERO_STEPS = [
 					<Button
 						size="lg"
 						type="submit"
-						class="w-full max-w-xs rounded-full font-bold !text-white {nearestPoiColor ? "!" + nearestPoiColor : ""}"
+						class="w-full max-w-xs rounded-full font-bold !text-white {nearestPoiOverrideColor}"
 						disabled={isUnlocking}
 					>
 						{isUnlocking ? 'Unlocking…' : `Unlock ${selectedPoi?.name ?? 'location'}`}
@@ -993,7 +1024,7 @@ const HERO_STEPS = [
 				<Button
 					size="lg"
 					type="submit"
-					class="w-full max-w-xs rounded-full font-bold !text-white {nearestPoiColor ? "!" + nearestPoiColor : ""}"
+					class="w-full max-w-xs rounded-full font-bold !text-white {nearestPoiOverrideColor}"
 					disabled={isUnlocking}
 				>
 					{isUnlocking ? 'Unlocking…' : `Unlock ${selectedPoi?.name ?? 'location'}`}
@@ -1017,7 +1048,7 @@ const HERO_STEPS = [
 	<!-- ── Story sheet ────────────────────────────────────────────────── -->
 	<div
 		class="absolute right-0 bottom-0 left-0 z-20 mx-auto max-w-3xl transition-[height] duration-300 ease-out"
-		style="height: {sheetOpen ? '80vh' : '52px'}"
+		style="height: {sheetOpen ? '80dvh' : '52px'}"
 	>
 		<div class="flex h-full flex-col overflow-hidden rounded-t-3xl bg-white shadow-2xl">
 			<!-- Handle + header toggle -->

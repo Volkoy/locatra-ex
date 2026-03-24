@@ -16,7 +16,7 @@
 	let selectedCharacter = $derived(characters[currentIndex]);
 </script>
 
-<div class="flex h-screen bg-primary-foreground">
+<div class="flex h-[calc(100svh-var(--app-nav-height,0px))] bg-primary-foreground">
 	<div
 		class="mx-4 my-4 flex w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-dark-green bg-white shadow-lg md:mx-auto"
 	>

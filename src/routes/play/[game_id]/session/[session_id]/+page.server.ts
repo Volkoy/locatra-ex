@@ -167,11 +167,16 @@ export const actions: Actions = {
 
 		// GPS proximity check
 		if (gameSession.play_mode === 'gps' && !isNaN(user_lng) && !isNaN(user_lat)) {
+			const { data: poi } = await supabase
+				.from('pois')
+				.select('radius')
+				.eq('id', poi_id)
+				.single();
 			const { data: withinRange } = await supabase.rpc('check_poi_proximity', {
 				poi_id_param: poi_id,
 				user_lng,
 				user_lat,
-				radius_meters: 100
+				radius_meters: poi?.radius ?? 50
 			});
 			if (!withinRange) return fail(400, { message: 'Not close enough to POI' });
 		}

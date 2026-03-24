@@ -13,7 +13,8 @@
 	import { superForm } from 'sveltekit-superforms';
 	import { characterSchema } from '$lib/zod/schema';
 	import { zod4Client } from 'sveltekit-superforms/adapters';
-	import { invalidateAll } from '$app/navigation';
+	import { invalidateAll, beforeNavigate } from '$app/navigation';
+	import { onDestroy } from 'svelte';
 	import { toast } from 'svelte-sonner';
 	import Spinner from './ui/spinner/spinner.svelte';
 
@@ -117,6 +118,18 @@
 			toast.error('Failed to delete character');
 		}
 	}
+
+	beforeNavigate(() => {
+		// Ensure the portal-based sheet is closed before leaving this route.
+		isFormOpen = false;
+		editingCharacter = null;
+	});
+
+	onDestroy(() => {
+		// Defensive cleanup in case unmount happens while the sheet is open.
+		isFormOpen = false;
+		editingCharacter = null;
+	});
 </script>
 
 <div class="mx-auto w-full flex-1">
@@ -271,7 +284,7 @@
 </div>
 
 <Sheet.Root bind:open={isFormOpen}>
-	<Sheet.Content side="right" class="w-full overflow-y-auto sm:max-w-lg">
+	<Sheet.Content side="right" portalled={false} class="w-full overflow-y-auto sm:max-w-lg">
 		<Sheet.Header>
 			<Sheet.Title>{editingCharacter ? 'Edit Character' : 'Create New Character'}</Sheet.Title>
 			<Sheet.Description>

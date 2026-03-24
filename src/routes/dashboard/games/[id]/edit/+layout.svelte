@@ -27,12 +27,17 @@
 	import ValidationChecklist from '$lib/components/validation-checklist.svelte';
 	import { cn } from '$lib/utils.js';
 	import type { LayoutData } from './$types';
-	import { goto } from '$app/navigation';
+	import { goto, afterNavigate } from '$app/navigation';
 
 	let { children, data }: { children: import('svelte').Snippet; data: LayoutData } = $props();
 
 	let rightSidebarCollapsed = $state(false);
 	let isLargeScreen = $state(true); // Default to true for SSR
+	let contentEl: HTMLElement | null = $state(null);
+
+	afterNavigate(() => {
+		contentEl?.scrollTo(0, 0);
+	});
 
 	$effect(() => {
 		if (typeof window !== 'undefined') {
@@ -173,25 +178,27 @@
 		const warnings = currentSectionChecks.filter((c) => c.status === 'warning').length;
 		return { complete, incomplete, warnings, total: currentSectionChecks.length };
 	});
+
+	const routeRenderKey = $derived(page.route.id ?? page.url.pathname);
 </script>
 
 <Toaster position="bottom-left" closeButton />
 
-<div class="flex h-screen w-full">
+<div class="flex h-[100svh] w-full overflow-hidden [--navbar-height:4rem]">
 	<!-- Left Sidebar -->
 	<Sidebar.Provider>
 		<Sidebar.Root collapsible="icon">
-			<Sidebar.Header>
-				<div class="flex items-center justify-center">
+			<Sidebar.Header class="h-[var(--navbar-height)] min-h-[var(--navbar-height)]">
+				<div class="flex h-full items-center justify-center px-2">
 					<img
 						src={logo}
 						alt="PathWriter"
-						class="w-full px-8 group-data-[collapsible=icon]:hidden"
+						class="h-full w-auto max-w-full object-contain px-6 py-2 group-data-[collapsible=icon]:hidden"
 					/>
 					<img
 						src={favicon}
 						alt="PathWriter"
-						class="hidden h-7 w-7 group-data-[collapsible=icon]:block"
+						class="hidden h-full w-auto object-contain p-3 group-data-[collapsible=icon]:block"
 					/>
 				</div>
 			</Sidebar.Header>
@@ -323,9 +330,11 @@
 			<Sidebar.Rail />
 		</Sidebar.Root>
 
-		<Sidebar.Inset class="flex flex-1 flex-col">
+		<Sidebar.Inset class="flex h-[100svh] flex-1 flex-col overflow-hidden">
 			<!-- Header with Breadcrumbs and Sidebar Toggle -->
-			<header class="flex h-16 items-center justify-between gap-4 border-b bg-background px-6">
+			<header
+				class="flex h-[var(--navbar-height)] min-h-[var(--navbar-height)] items-center justify-between gap-4 border-b bg-background px-6"
+			>
 				<div class="flex items-center gap-4">
 					<Sidebar.Trigger class="flex-shrink-0" />
 					<Breadcrumb.Root>
@@ -376,8 +385,13 @@
 			</header>
 
 			<!-- Main Content -->
-			<div class="flex flex-1 flex-col gap-4 overflow-y-auto p-4">
-				{@render children()}
+			<div
+				bind:this={contentEl}
+				class="flex h-[calc(100svh-var(--navbar-height))] flex-col gap-4 overflow-y-auto p-4"
+			>
+				{#key routeRenderKey}
+					{@render children()}
+				{/key}
 			</div>
 		</Sidebar.Inset>
 	</Sidebar.Provider>

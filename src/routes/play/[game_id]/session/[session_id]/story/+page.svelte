@@ -48,7 +48,15 @@
 
 	type Card = { id: number; title: string | null; prompt: string | null };
 
-	type SessionWithCharacter = typeof session & { characters: { name: string; summary: string | null; image_url: string | null; bg_color: string; text_color: string } | null };
+	type SessionWithCharacter = typeof session & {
+		characters: {
+			name: string;
+			summary: string | null;
+			image_url: string | null;
+			bg_color: string;
+			text_color: string;
+		} | null;
+	};
 
 	const character = $derived((session as SessionWithCharacter).characters);
 	const typedSegments = $derived(segments as Segment[]);
@@ -70,7 +78,7 @@
 	}
 </script>
 
-<div class="min-h-screen bg-background">
+<div class="min-h-[calc(100svh-var(--app-nav-height,0px))] bg-background">
 	<!-- Header -->
 	<div class="bg-dark-green px-4 py-8 text-white">
 		<div class="mx-auto flex max-w-2xl items-center gap-3">
@@ -105,7 +113,7 @@
 						isSaving = true;
 						return async ({ result, update }) => {
 							isSaving = false;
-							if (result.type === "success" && (result.data as { story_id?: string })?.story_id) {
+							if (result.type === 'success' && (result.data as { story_id?: string })?.story_id) {
 								goto(`/stories/${(result.data as { story_id?: string }).story_id}`);
 							} else {
 								await update({ reset: false });

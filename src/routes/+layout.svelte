@@ -39,27 +39,31 @@
 	<link rel="icon" href={favicon} />
 </svelte:head>
 
-{#if showNav}
-	<nav class="flex items-center justify-between border-b border-dark-green p-2">
-		<div class="flex items-center gap-6">
-			<a href="/">
-				<img src={logo} alt="PathWriter" class="h-14" />
-			</a>
-		</div>
-		<div class="flex items-center gap-6">
-			<div class="hidden items-center gap-2 md:flex">
-				<Button variant="ghost" href="/play">Play Games</Button>
+<div class="[--app-nav-height:4.5rem]">
+	{#if showNav}
+		<nav
+			class="flex h-[var(--app-nav-height)] items-center justify-between border-b border-dark-green px-2"
+		>
+			<div class="flex items-center gap-6">
+				<a href="/" class="flex items-center py-1">
+					<img src={logo} alt="PathWriter" class="block h-12 w-auto object-contain md:h-14" />
+				</a>
+			</div>
+			<div class="flex items-center gap-6">
+				<div class="hidden items-center gap-2 md:flex">
+					<Button variant="ghost" href="/play">Play Games</Button>
+					{#if isAuthenticated}
+						<Button variant="ghost" href="/dashboard/games/new">Create Games</Button>
+					{/if}
+				</div>
 				{#if isAuthenticated}
-					<Button variant="ghost" href="/dashboard/games/new">Create Games</Button>
+					<Button onclick={logout}>Logout</Button>
+				{:else}
+					<Button href="/auth">Get Started</Button>
 				{/if}
 			</div>
-			{#if isAuthenticated}
-				<Button onclick={logout}>Logout</Button>
-			{:else}
-				<Button href="/auth">Get Started</Button>
-			{/if}
-		</div>
-	</nav>
-{/if}
+		</nav>
+	{/if}
 
-{@render children()}
+	{@render children()}
+</div>

@@ -71,11 +71,16 @@
 	let hideTimer: ReturnType<typeof setTimeout> | null = null;
 
 	function showCard(id: string) {
-		if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
+		if (hideTimer) {
+			clearTimeout(hideTimer);
+			hideTimer = null;
+		}
 		hoveredGameId = id;
 	}
 	function hideCard() {
-		hideTimer = setTimeout(() => { hoveredGameId = null; }, 150);
+		hideTimer = setTimeout(() => {
+			hoveredGameId = null;
+		}, 150);
 	}
 </script>
 
@@ -84,8 +89,7 @@
   - Mobile: header + search/toggle bar + list OR map (toggled)
   - Desktop (md+): left panel (header + search + scrollable list) | right panel (map, always visible)
 -->
-<div class="flex h-screen flex-col overflow-hidden">
-
+<div class="flex h-[calc(100svh-var(--app-nav-height,0px))] flex-col overflow-hidden">
 	<!-- ── Desktop: two-panel ── -->
 	<div class="hidden md:flex md:flex-1 md:overflow-hidden">
 		<!-- Left panel -->
@@ -100,17 +104,12 @@
 			<div class="border-b bg-white px-4 py-3">
 				<div class="relative">
 					<Search class="absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-					<Input
-						type="text"
-						placeholder="Search games..."
-						bind:value={searchQuery}
-						class="pl-9"
-					/>
+					<Input type="text" placeholder="Search games..." bind:value={searchQuery} class="pl-9" />
 				</div>
 			</div>
 
 			<!-- Scrollable list -->
-			<div class="flex-1 overflow-y-auto divide-y">
+			<div class="flex-1 divide-y overflow-y-auto">
 				{#if filteredGames.length === 0}
 					<div class="py-16 text-center text-muted-foreground">
 						<Map class="mx-auto mb-3 h-12 w-12 opacity-30" />
@@ -143,7 +142,9 @@
 							>
 								<!-- Pin -->
 								<a href="/play/{game.game_id}">
-									<div class="flex h-9 w-9 cursor-pointer items-center justify-center rounded-full border-2 border-white bg-dark-green shadow-lg transition-colors hover:bg-landmark-green">
+									<div
+										class="flex h-9 w-9 cursor-pointer items-center justify-center rounded-full border-2 border-white bg-dark-green shadow-lg transition-colors hover:bg-landmark-green"
+									>
 										<MapPin class="h-4 w-4 text-white" />
 									</div>
 								</a>
@@ -155,16 +156,24 @@
 										onmouseleave={hideCard}
 									>
 										{#if game.image_url}
-											<img src={game.image_url} alt={game.title} class="h-28 w-full rounded-t-xl object-cover" />
+											<img
+												src={game.image_url}
+												alt={game.title}
+												class="h-28 w-full rounded-t-xl object-cover"
+											/>
 										{/if}
 										<div class="p-3">
-											<p class="font-semibold leading-tight text-dark-green">{game.title}</p>
+											<p class="leading-tight font-semibold text-dark-green">{game.title}</p>
 											{#if game.description}
-												<p class="mt-1 line-clamp-2 text-xs text-muted-foreground">{game.description}</p>
+												<p class="mt-1 line-clamp-2 text-xs text-muted-foreground">
+													{game.description}
+												</p>
 											{/if}
 											{#if getDistance(game) !== null}
-											<p class="mt-1 text-xs text-muted-foreground">{getDistance(game)!.toFixed(1)} km away</p>
-										{/if}
+												<p class="mt-1 text-xs text-muted-foreground">
+													{getDistance(game)!.toFixed(1)} km away
+												</p>
+											{/if}
 										</div>
 									</div>
 								{/if}
@@ -175,7 +184,9 @@
 
 				{#if userLocation}
 					<Marker lngLat={[userLocation.lng, userLocation.lat]}>
-						<div class="h-4 w-4 animate-pulse rounded-full border-2 border-white bg-blue-500 shadow"></div>
+						<div
+							class="h-4 w-4 animate-pulse rounded-full border-2 border-white bg-blue-500 shadow"
+						></div>
 					</Marker>
 				{/if}
 			</MapLibre>
@@ -194,12 +205,7 @@
 		<div class="flex items-center gap-2 border-b bg-white px-4 py-3">
 			<div class="relative flex-1">
 				<Search class="absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-				<Input
-					type="text"
-					placeholder="Search games..."
-					bind:value={searchQuery}
-					class="pl-9"
-				/>
+				<Input type="text" placeholder="Search games..." bind:value={searchQuery} class="pl-9" />
 			</div>
 			<div class="flex gap-1">
 				<Button
@@ -221,7 +227,7 @@
 
 		<!-- Content -->
 		{#if viewMode === 'list'}
-			<div class="flex-1 overflow-y-auto divide-y">
+			<div class="flex-1 divide-y overflow-y-auto">
 				{#if filteredGames.length === 0}
 					<div class="py-16 text-center text-muted-foreground">
 						<Map class="mx-auto mb-3 h-12 w-12 opacity-30" />
@@ -259,12 +265,13 @@
 
 					{#if userLocation}
 						<Marker lngLat={[userLocation.lng, userLocation.lat]}>
-							<div class="h-4 w-4 animate-pulse rounded-full border-2 border-white bg-blue-500 shadow"></div>
+							<div
+								class="h-4 w-4 animate-pulse rounded-full border-2 border-white bg-blue-500 shadow"
+							></div>
 						</Marker>
 					{/if}
 				</MapLibre>
 			</div>
 		{/if}
 	</div>
-
 </div>

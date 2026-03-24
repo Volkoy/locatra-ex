@@ -10,7 +10,7 @@
 	<title>Stories — {game.title}</title>
 </svelte:head>
 
-<div class="flex min-h-screen bg-primary-foreground">
+<div class="flex min-h-[calc(100svh-var(--app-nav-height,0px))] bg-primary-foreground">
 	<div
 		class="mx-4 my-4 flex w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-dark-green bg-white shadow-lg md:mx-auto"
 	>
@@ -51,7 +51,8 @@
 								{:else}
 									<div
 										class="flex size-12 shrink-0 items-center justify-center rounded-full text-lg font-bold"
-										style="background-color: {story.character?.bg_color ?? '#0f342a'}; color: {story.character?.text_color ?? '#ffffff'}"
+										style="background-color: {story.character?.bg_color ?? '#0f342a'}; color: {story
+											.character?.text_color ?? '#ffffff'}"
 									>
 										{story.character_name.charAt(0)}
 									</div>

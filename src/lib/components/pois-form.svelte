@@ -31,8 +31,8 @@
 	import { superForm } from 'sveltekit-superforms';
 	import { poiSchema } from '$lib/zod/schema';
 	import { zod4Client } from 'sveltekit-superforms/adapters';
-	import { invalidateAll } from '$app/navigation';
-	import { onMount } from 'svelte';
+	import { invalidateAll, beforeNavigate } from '$app/navigation';
+	import { onMount, onDestroy } from 'svelte';
 	import { toast } from 'svelte-sonner';
 	import { Spinner } from './ui/spinner';
 
@@ -243,6 +243,15 @@
 		// Don't handle map clicks when dragging markers or right after finishing a drag
 		if (isDraggingMarker || justFinishedDragging) return;
 
+		// Ignore clicks coming from the start location marker.
+		const clickTarget = e.originalEvent?.target;
+		if (
+			clickTarget instanceof Element &&
+			clickTarget.closest('[data-start-location-marker="true"]')
+		) {
+			return;
+		}
+
 		const { lng, lat } = e.lngLat;
 		console.log('Map clicked at:', lng, lat);
 		tempMarkerPosition = { lng, lat };
@@ -367,36 +376,49 @@
 		const OUTLINE = 'poi-radius-outline';
 		const SOURCE = 'poi-radius';
 
-		const cleanup = () => {
-			if (!map) return;
-			if (map.getLayer(FILL)) map.removeLayer(FILL);
-			if (map.getLayer(OUTLINE)) map.removeLayer(OUTLINE);
-			if (map.getSource(SOURCE)) map.removeSource(SOURCE);
+		const hasStyle = () => {
+			return !!map && !!(map as Map & { style?: unknown }).style;
 		};
 
-		if (!map || !isFormOpen) return cleanup;
+		const cleanup = () => {
+			if (!map || !hasStyle()) return;
+
+			try {
+				if (map.getLayer(FILL)) map.removeLayer(FILL);
+				if (map.getLayer(OUTLINE)) map.removeLayer(OUTLINE);
+				if (map.getSource(SOURCE)) map.removeSource(SOURCE);
+			} catch {
+				// Map may be tearing down during fast route transitions.
+			}
+		};
+
+		if (!map || !isFormOpen || !hasStyle()) return cleanup;
 
 		const pos = editingPOI?.id ? poiPositions[editingPOI.id] : tempMarkerPosition;
 		if (!pos) return cleanup;
 
 		const geojson = createCircleGeoJSON(pos.lng, pos.lat, $formData.radius);
 
-		if (map.getSource(SOURCE)) {
-			(map.getSource(SOURCE) as GeoJSONSource).setData(geojson);
-		} else {
-			map.addSource(SOURCE, { type: 'geojson', data: geojson });
-			map.addLayer({
-				id: FILL,
-				type: 'fill',
-				source: SOURCE,
-				paint: { 'fill-color': '#6366f1', 'fill-opacity': 0.15 }
-			});
-			map.addLayer({
-				id: OUTLINE,
-				type: 'line',
-				source: SOURCE,
-				paint: { 'line-color': '#6366f1', 'line-width': 2, 'line-dasharray': [3, 2] }
-			});
+		try {
+			if (map.getSource(SOURCE)) {
+				(map.getSource(SOURCE) as GeoJSONSource).setData(geojson);
+			} else {
+				map.addSource(SOURCE, { type: 'geojson', data: geojson });
+				map.addLayer({
+					id: FILL,
+					type: 'fill',
+					source: SOURCE,
+					paint: { 'fill-color': '#6366f1', 'fill-opacity': 0.15 }
+				});
+				map.addLayer({
+					id: OUTLINE,
+					type: 'line',
+					source: SOURCE,
+					paint: { 'line-color': '#6366f1', 'line-width': 2, 'line-dasharray': [3, 2] }
+				});
+			}
+		} catch {
+			// Ignore style mutation races while map/style is being recreated or destroyed.
 		}
 
 		return cleanup;
@@ -416,9 +438,12 @@
 
 		// Fly to POI location - use the current position from poiPositions
 		if (map) {
+			const currentZoom = map.getZoom();
+			const targetZoom = currentZoom < 16 ? 16 : currentZoom;
+
 			map.flyTo({
 				center: [poiPositions[poi.id].lng, poiPositions[poi.id].lat],
-				zoom: 16,
+				zoom: targetZoom,
 				duration: 1000
 			});
 		}
@@ -486,6 +511,20 @@
 			toast.error('Failed to delete POI');
 		}
 	}
+
+	beforeNavigate(() => {
+		isFormOpen = false;
+		isListOpen = false;
+		editingPOI = null;
+		tempMarkerPosition = null;
+	});
+
+	onDestroy(() => {
+		isFormOpen = false;
+		isListOpen = false;
+		editingPOI = null;
+		tempMarkerPosition = null;
+	});
 </script>
 
 <div class="flex h-full w-full flex-col gap-4">
@@ -755,7 +794,14 @@
 						<Tooltip.Provider>
 							<Tooltip.Root>
 								<Tooltip.Trigger>
-									<div class="flex flex-col items-center">
+									<button
+										type="button"
+										class="flex flex-col items-center"
+										data-start-location-marker="true"
+										onclick={(e) => e.stopPropagation()}
+										onmousedown={(e) => e.stopPropagation()}
+										aria-label="Starting location marker"
+									>
 										<div
 											class="flex size-10 items-center justify-center rounded-full bg-start-red p-2 text-white shadow-lg ring-2 ring-white"
 										>
@@ -766,7 +812,7 @@
 										>
 											Starting Location
 										</div>
-									</div>
+									</button>
 								</Tooltip.Trigger>
 								<Tooltip.Content
 									>Go to General Information to edit the starting location</Tooltip.Content
@@ -802,6 +848,7 @@
 <!-- Dialog Form -->
 <Sheet.Root bind:open={isFormOpen}>
 	<Sheet.Content
+		portalled={false}
 		class="fixed top-0 right-0 z-[100] h-full w-full max-w-md overflow-y-auto bg-white shadow-xl"
 		onInteractOutside={(e) => e.preventDefault()}
 	>

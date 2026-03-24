@@ -28,7 +28,7 @@
 	}
 </script>
 
-<div class="flex h-screen bg-primary-foreground">
+<div class="flex h-[calc(100svh-var(--app-nav-height,0px))] bg-primary-foreground">
 	<div
 		class="mx-4 my-4 flex w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-dark-green bg-white shadow-lg md:mx-auto"
 	>
@@ -110,8 +110,8 @@
 					<Button class="w-full" disabled={isSigningIn} onclick={() => handlePlay('gps')}>
 						{isSigningIn ? 'Starting...' : 'Play using GPS'}
 					</Button>
-					<Button variant='ghost' class='w-full' href='/play/{game.game_id}/stories'>
-						<BookOpen class='size-4' />
+					<Button variant="ghost" class="w-full" href="/play/{game.game_id}/stories">
+						<BookOpen class="size-4" />
 						Read stories from other players
 					</Button>
 				</div>

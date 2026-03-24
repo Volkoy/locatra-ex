@@ -34,7 +34,9 @@
 	type Card = Database['public']['Tables']['cards']['Row'];
 	import { cardSchema } from '$lib/zod/schema';
 	import { zod4Client } from 'sveltekit-superforms/adapters';
-	import { invalidateAll } from '$app/navigation';
+	import { invalidateAll, beforeNavigate } from '$app/navigation';
+	import { page } from '$app/state';
+	import { onDestroy } from 'svelte';
 	import { toast } from 'svelte-sonner';
 
 	let { data, params } = $props();
@@ -48,12 +50,42 @@
 	];
 
 	const allJourneySteps = [
-		{ value: 'call_to_adventure', label: 'Call to Adventure', description: 'The player is invited into the story world and begins to sense that something extraordinary awaits.' },
-		{ value: 'crossing_the_threshold', label: 'Crossing the Threshold', description: 'The player commits to the journey, leaving the familiar behind and entering unknown territory.' },
-		{ value: 'meeting_the_mentor', label: 'Meeting the Mentor', description: 'The player encounters guidance — a person, place, or discovery — that equips them for challenges ahead.' },
-		{ value: 'trials_and_growth', label: 'Trials and Growth', description: 'The player faces obstacles and setbacks that test their resolve and push them to grow.' },
-		{ value: 'death_and_transformation', label: 'Death and Transformation', description: 'A moment of crisis or deep change — the player must let go of something old to become something new.' },
-		{ value: 'change_and_return', label: 'Change and Return', description: 'The player returns transformed, carrying new wisdom and a changed perspective on the world.' }
+		{
+			value: 'call_to_adventure',
+			label: 'Call to Adventure',
+			description:
+				'The player is invited into the story world and begins to sense that something extraordinary awaits.'
+		},
+		{
+			value: 'crossing_the_threshold',
+			label: 'Crossing the Threshold',
+			description:
+				'The player commits to the journey, leaving the familiar behind and entering unknown territory.'
+		},
+		{
+			value: 'meeting_the_mentor',
+			label: 'Meeting the Mentor',
+			description:
+				'The player encounters guidance — a person, place, or discovery — that equips them for challenges ahead.'
+		},
+		{
+			value: 'trials_and_growth',
+			label: 'Trials and Growth',
+			description:
+				'The player faces obstacles and setbacks that test their resolve and push them to grow.'
+		},
+		{
+			value: 'death_and_transformation',
+			label: 'Death and Transformation',
+			description:
+				'A moment of crisis or deep change — the player must let go of something old to become something new.'
+		},
+		{
+			value: 'change_and_return',
+			label: 'Change and Return',
+			description:
+				'The player returns transformed, carrying new wisdom and a changed perspective on the world.'
+		}
 	];
 
 	const characterTypes = [
@@ -303,6 +335,16 @@
 	function removeStep(value: string) {
 		$formData.hero_steps = $formData.hero_steps.filter((i: string) => i !== value);
 	}
+
+	beforeNavigate(() => {
+		isFormOpen = false;
+		editingCard = null;
+	});
+
+	onDestroy(() => {
+		isFormOpen = false;
+		editingCard = null;
+	});
 </script>
 
 <div class="mx-auto w-full flex-1">
@@ -490,267 +532,282 @@
 	</div>
 </div>
 
-<Sheet.Root bind:open={isFormOpen}>
-	<Sheet.Content side="right" class="w-full overflow-y-auto pb-4 sm:max-w-lg">
-		<Sheet.Header>
-			<Sheet.Title>{editingCard ? 'Edit Card' : 'Create New Card'}</Sheet.Title>
-			<Sheet.Description>
-				{editingCard
-					? 'Update the card details below.'
-					: 'Fill in the details to create a new card prompt.'}
-			</Sheet.Description>
-		</Sheet.Header>
+{#if page.url.pathname.endsWith('/cards')}
+	<Sheet.Root bind:open={isFormOpen}>
+		<Sheet.Content side="right" portalled={false} class="w-full overflow-y-auto pb-4 sm:max-w-lg">
+			<Sheet.Header>
+				<Sheet.Title>{editingCard ? 'Edit Card' : 'Create New Card'}</Sheet.Title>
+				<Sheet.Description>
+					{editingCard
+						? 'Update the card details below.'
+						: 'Fill in the details to create a new card prompt.'}
+				</Sheet.Description>
+			</Sheet.Header>
 
-		<form
-			method="POST"
-			action="?/{editingCard ? 'update' : 'create'}"
-			use:enhance
-			class="space-y-6 px-4"
-		>
-			<!-- Card Category First -->
-			<Form.Fieldset {form} name="card_category">
-				<div class="space-y-4 rounded-lg border border-gray-200 bg-gray-50 p-4">
-					<Form.Legend class="font-semibold text-gray-900">Card Category</Form.Legend>
-					<Tabs.Root bind:value={$formData.card_category}>
-						<Tabs.List class="grid w-full grid-cols-2">
-							<Tabs.Trigger value="general">General Card</Tabs.Trigger>
-							<Tabs.Trigger value="poi_specific">POI-Specific</Tabs.Trigger>
-						</Tabs.List>
+			<form
+				method="POST"
+				action="?/{editingCard ? 'update' : 'create'}"
+				use:enhance
+				class="space-y-6 px-4"
+			>
+				<!-- Card Category First -->
+				<Form.Fieldset {form} name="card_category">
+					<div class="space-y-4 rounded-lg border border-gray-200 bg-gray-50 p-4">
+						<Form.Legend class="font-semibold text-gray-900">Card Category</Form.Legend>
+						<Tabs.Root bind:value={$formData.card_category}>
+							<Tabs.List class="grid w-full grid-cols-2">
+								<Tabs.Trigger value="general">General Card</Tabs.Trigger>
+								<Tabs.Trigger value="poi_specific">POI-Specific</Tabs.Trigger>
+							</Tabs.List>
 
-						<Tabs.Content value="general" class="space-y-4 pt-4">
-							<Form.Field {form} name="keywords">
-								<Form.Control>
-									{#snippet children({ props })}
-										<Form.Label>Keywords</Form.Label>
-										<Form.Description>
-											Keywords that define this card's theme and context. The AI will use these to
-											generate relevant prompts that can work across multiple locations in your
-											game.
-										</Form.Description>
-										<Input
-											{...props}
-											bind:value={$formData.keywords}
-											placeholder="e.g., nature, reflection, growth"
-										/>
-									{/snippet}
-								</Form.Control>
-								<Form.FieldErrors />
-							</Form.Field>
-						</Tabs.Content>
+							<Tabs.Content value="general" class="space-y-4 pt-4">
+								<Form.Field {form} name="keywords">
+									<Form.Control>
+										{#snippet children({ props })}
+											<Form.Label>Keywords</Form.Label>
+											<Form.Description>
+												Keywords that define this card's theme and context. The AI will use these to
+												generate relevant prompts that can work across multiple locations in your
+												game.
+											</Form.Description>
+											<Input
+												{...props}
+												bind:value={$formData.keywords}
+												placeholder="e.g., nature, reflection, growth"
+											/>
+										{/snippet}
+									</Form.Control>
+									<Form.FieldErrors />
+								</Form.Field>
+							</Tabs.Content>
 
-						<Tabs.Content value="poi_specific" class="space-y-4 pt-4">
-							<Form.Field {form} name="poi_id">
-								<Form.Control>
-									{#snippet children({ props })}
-										<Form.Label>Select POI</Form.Label>
-										<Form.Description>
-											This card will only appear at the selected location. The AI will use the POI's
-											description, context, and tags to generate location-specific prompts.
-										</Form.Description>
-										<Select.Root type="single" bind:value={$formData.poi_id}>
-											<Select.Trigger {...props} class="w-full">
-												{$formData.poi_id
-													? pois.find((p: { id: number; name: string }) => p.id === $formData.poi_id)?.name
-													: 'Select a POI'}
-											</Select.Trigger>
-											<Select.Content>
-												{#each pois as poi (poi.id)}
-													<Select.Item value={poi.id}>
-														<div class="flex items-center gap-2">
-															<MapPin class="h-4 w-4" />
-															{poi.name}
-														</div>
-													</Select.Item>
-												{/each}
-											</Select.Content>
-										</Select.Root>
-										<input hidden bind:value={$formData.poi_id} />
-									{/snippet}
-								</Form.Control>
-								<Form.FieldErrors />
-							</Form.Field>
-						</Tabs.Content>
-					</Tabs.Root>
-				</div>
-			</Form.Fieldset>
-
-			<!-- Card Settings Group -->
-			<div class="space-y-6 rounded-lg border border-gray-200 bg-gray-50 p-4">
-				<h3 class="font-semibold text-gray-900">Card Settings</h3>
-
-				<Form.Field {form} name="type">
-					<Form.Control>
-						{#snippet children({ props })}
-							<Form.Label>Card Type</Form.Label>
-							<Form.Description>
-								This defines the card's focus and how it engages players. Choose the type that best
-								fits the card's purpose.
-							</Form.Description>
-							<Select.Root type="single" bind:value={$formData.type}>
-								<Select.Trigger {...props} class="w-full">
-									{$formData.type
-										? types.find((t) => t.value === $formData.type)?.label
-										: 'Select card type'}
-								</Select.Trigger>
-								<Select.Content>
-									{#each types as type (type.value)}
-										<Select.Item value={type.value}>{type.label}</Select.Item>
-									{/each}
-								</Select.Content>
-							</Select.Root>
-						{/snippet}
-					</Form.Control>
-					<Form.FieldErrors />
-				</Form.Field>
-
-				<Form.Field {form} name="character_category">
-					<Form.Control>
-						{#snippet children({ props })}
-							<Form.Label>Character Type</Form.Label>
-							<Form.Description>
-								Specify which character perspectives this card applies to in the story.
-							</Form.Description>
-							<Select.Root type="single" bind:value={$formData.character_category}>
-								<Select.Trigger {...props} class="w-full">
-									{$formData.character_category
-										? characterTypes.find((t) => t.value === $formData.character_category)?.label
-										: 'Select character type'}
-								</Select.Trigger>
-								<Select.Content>
-									{#each characterTypes as type (type.value)}
-										<Select.Item value={type.value}>{type.label}</Select.Item>
-									{/each}
-								</Select.Content>
-							</Select.Root>
-							<input hidden bind:value={$formData.character_category} />
-						{/snippet}
-					</Form.Control>
-					<Form.FieldErrors />
-				</Form.Field>
-
-				<Form.Fieldset {form} name="hero_steps">
-					<Form.Legend>Hero's Journey Steps</Form.Legend>
-					<Form.Description
-						>Choose which stages of the player's narrative arc this card should appear in. Selecting
-						multiple steps makes the card appear across different moments in their journey.</Form.Description
-					>
-					<div class="space-y-3 rounded-lg border border-gray-200 bg-white p-4">
-						<div class="flex items-center justify-between border-b border-gray-100 pb-2">
-							<span class="text-xs text-gray-500">{$formData.hero_steps?.length ?? 0}/{allJourneySteps.length} selected</span>
-							<button
-								type="button"
-								class="text-xs font-medium text-primary hover:underline"
-								onclick={$formData.hero_steps?.length === allJourneySteps.length ? deselectAllSteps : selectAllSteps}
-							>
-								{$formData.hero_steps?.length === allJourneySteps.length ? 'Deselect All' : 'Select All'}
-							</button>
-						</div>
-						{#each allJourneySteps as step (step.value)}
-							{@const checked = $formData.hero_steps?.includes(step.value)}
-							<div class="flex items-start space-x-2">
-								<Form.Control>
-									{#snippet children({ props })}
-										<Checkbox
-											{...props}
-											value={step.value}
-											{checked}
-											class="mt-0.5"
-											onCheckedChange={(v) => {
-												if (v) {
-													addStep(step.value);
-												} else {
-													removeStep(step.value);
-												}
-											}}
-										/>
-										<div class="flex flex-col gap-0.5">
-											<Form.Label
-												for={`step-${step.value}`}
-												class="cursor-pointer text-sm font-medium"
-											>
-												{step.label}
-											</Form.Label>
-											<p class="text-xs leading-snug text-gray-500">{step.description}</p>
-										</div>
-									{/snippet}
-								</Form.Control>
-							</div>
-						{/each}
-						<Form.FieldErrors />
+							<Tabs.Content value="poi_specific" class="space-y-4 pt-4">
+								<Form.Field {form} name="poi_id">
+									<Form.Control>
+										{#snippet children({ props })}
+											<Form.Label>Select POI</Form.Label>
+											<Form.Description>
+												This card will only appear at the selected location. The AI will use the
+												POI's description, context, and tags to generate location-specific prompts.
+											</Form.Description>
+											<Select.Root type="single" bind:value={$formData.poi_id}>
+												<Select.Trigger {...props} class="w-full">
+													{$formData.poi_id
+														? pois.find(
+																(p: { id: number; name: string }) => p.id === $formData.poi_id
+															)?.name
+														: 'Select a POI'}
+												</Select.Trigger>
+												<Select.Content>
+													{#each pois as poi (poi.id)}
+														<Select.Item value={poi.id}>
+															<div class="flex items-center gap-2">
+																<MapPin class="h-4 w-4" />
+																{poi.name}
+															</div>
+														</Select.Item>
+													{/each}
+												</Select.Content>
+											</Select.Root>
+											<input hidden bind:value={$formData.poi_id} />
+										{/snippet}
+									</Form.Control>
+									<Form.FieldErrors />
+								</Form.Field>
+							</Tabs.Content>
+						</Tabs.Root>
 					</div>
 				</Form.Fieldset>
-			</div>
 
-			<!-- Title and Prompt Group -->
-			<div class="space-y-6 rounded-lg border border-gray-200 bg-gray-50 p-4">
-				<div class="flex items-center justify-between">
-					<h3 class="font-semibold text-gray-900">Card Content</h3>
-					<Button
-						type="button"
-						variant="outline"
-						size="sm"
-						onclick={generateAIContent}
-						disabled={isGeneratingAI}
-						class="border-blue-300 bg-white hover:bg-blue-50"
-					>
-						{#if isGeneratingAI}
-							<Spinner class="mr-1.5 h-3.5 w-3.5 text-blue-600" />
-						{:else}
-							<Sparkles class="mr-1.5 h-3.5 w-3.5 text-blue-600" />
-						{/if}
-						{#if isGeneratingAI}
-							<span class="text-xs">Generating...</span>
-						{:else}
-							<span class="text-xs"
-								>{$formData.title || $formData.prompt ? 'Refine with AI' : 'Generate with AI'}</span
-							>
-						{/if}
-					</Button>
+				<!-- Card Settings Group -->
+				<div class="space-y-6 rounded-lg border border-gray-200 bg-gray-50 p-4">
+					<h3 class="font-semibold text-gray-900">Card Settings</h3>
+
+					<Form.Field {form} name="type">
+						<Form.Control>
+							{#snippet children({ props })}
+								<Form.Label>Card Type</Form.Label>
+								<Form.Description>
+									This defines the card's focus and how it engages players. Choose the type that
+									best fits the card's purpose.
+								</Form.Description>
+								<Select.Root type="single" bind:value={$formData.type}>
+									<Select.Trigger {...props} class="w-full">
+										{$formData.type
+											? types.find((t) => t.value === $formData.type)?.label
+											: 'Select card type'}
+									</Select.Trigger>
+									<Select.Content>
+										{#each types as type (type.value)}
+											<Select.Item value={type.value}>{type.label}</Select.Item>
+										{/each}
+									</Select.Content>
+								</Select.Root>
+							{/snippet}
+						</Form.Control>
+						<Form.FieldErrors />
+					</Form.Field>
+
+					<Form.Field {form} name="character_category">
+						<Form.Control>
+							{#snippet children({ props })}
+								<Form.Label>Character Type</Form.Label>
+								<Form.Description>
+									Specify which character perspectives this card applies to in the story.
+								</Form.Description>
+								<Select.Root type="single" bind:value={$formData.character_category}>
+									<Select.Trigger {...props} class="w-full">
+										{$formData.character_category
+											? characterTypes.find((t) => t.value === $formData.character_category)?.label
+											: 'Select character type'}
+									</Select.Trigger>
+									<Select.Content>
+										{#each characterTypes as type (type.value)}
+											<Select.Item value={type.value}>{type.label}</Select.Item>
+										{/each}
+									</Select.Content>
+								</Select.Root>
+								<input hidden bind:value={$formData.character_category} />
+							{/snippet}
+						</Form.Control>
+						<Form.FieldErrors />
+					</Form.Field>
+
+					<Form.Fieldset {form} name="hero_steps">
+						<Form.Legend>Hero's Journey Steps</Form.Legend>
+						<Form.Description
+							>Choose which stages of the player's narrative arc this card should appear in.
+							Selecting multiple steps makes the card appear across different moments in their
+							journey.</Form.Description
+						>
+						<div class="space-y-3 rounded-lg border border-gray-200 bg-white p-4">
+							<div class="flex items-center justify-between border-b border-gray-100 pb-2">
+								<span class="text-xs text-gray-500"
+									>{$formData.hero_steps?.length ?? 0}/{allJourneySteps.length} selected</span
+								>
+								<button
+									type="button"
+									class="text-xs font-medium text-primary hover:underline"
+									onclick={$formData.hero_steps?.length === allJourneySteps.length
+										? deselectAllSteps
+										: selectAllSteps}
+								>
+									{$formData.hero_steps?.length === allJourneySteps.length
+										? 'Deselect All'
+										: 'Select All'}
+								</button>
+							</div>
+							{#each allJourneySteps as step (step.value)}
+								{@const checked = $formData.hero_steps?.includes(step.value)}
+								<div class="flex items-start space-x-2">
+									<Form.Control>
+										{#snippet children({ props })}
+											<Checkbox
+												{...props}
+												value={step.value}
+												{checked}
+												class="mt-0.5"
+												onCheckedChange={(v) => {
+													if (v) {
+														addStep(step.value);
+													} else {
+														removeStep(step.value);
+													}
+												}}
+											/>
+											<div class="flex flex-col gap-0.5">
+												<Form.Label
+													for={`step-${step.value}`}
+													class="cursor-pointer text-sm font-medium"
+												>
+													{step.label}
+												</Form.Label>
+												<p class="text-xs leading-snug text-gray-500">{step.description}</p>
+											</div>
+										{/snippet}
+									</Form.Control>
+								</div>
+							{/each}
+							<Form.FieldErrors />
+						</div>
+					</Form.Fieldset>
 				</div>
 
-				<Form.Field {form} name="title">
-					<Form.Control>
-						{#snippet children({ props })}
-							<Form.Label>Card Title</Form.Label>
-							<Input
-								{...props}
-								bind:value={$formData.title}
-								placeholder="e.g., A Moment of Reflection"
-							/>
-						{/snippet}
-					</Form.Control>
-					<Form.FieldErrors />
-				</Form.Field>
+				<!-- Title and Prompt Group -->
+				<div class="space-y-6 rounded-lg border border-gray-200 bg-gray-50 p-4">
+					<div class="flex items-center justify-between">
+						<h3 class="font-semibold text-gray-900">Card Content</h3>
+						<Button
+							type="button"
+							variant="outline"
+							size="sm"
+							onclick={generateAIContent}
+							disabled={isGeneratingAI}
+							class="border-blue-300 bg-white hover:bg-blue-50"
+						>
+							{#if isGeneratingAI}
+								<Spinner class="mr-1.5 h-3.5 w-3.5 text-blue-600" />
+							{:else}
+								<Sparkles class="mr-1.5 h-3.5 w-3.5 text-blue-600" />
+							{/if}
+							{#if isGeneratingAI}
+								<span class="text-xs">Generating...</span>
+							{:else}
+								<span class="text-xs"
+									>{$formData.title || $formData.prompt
+										? 'Refine with AI'
+										: 'Generate with AI'}</span
+								>
+							{/if}
+						</Button>
+					</div>
 
-				<Form.Field {form} name="prompt">
-					<Form.Control>
-						{#snippet children({ props })}
-							<Form.Label>Card Prompt</Form.Label>
-							<Textarea
-								{...props}
-								bind:value={$formData.prompt}
-								rows={6}
-								placeholder="Describe what the player should think about, do, or discover..."
-							/>
-						{/snippet}
-					</Form.Control>
-					<Form.FieldErrors />
-				</Form.Field>
-			</div>
+					<Form.Field {form} name="title">
+						<Form.Control>
+							{#snippet children({ props })}
+								<Form.Label>Card Title</Form.Label>
+								<Input
+									{...props}
+									bind:value={$formData.title}
+									placeholder="e.g., A Moment of Reflection"
+								/>
+							{/snippet}
+						</Form.Control>
+						<Form.FieldErrors />
+					</Form.Field>
 
-			<Sheet.Footer class="flex flex-row justify-end gap-2">
-				<Button type="button" variant="outline" onclick={() => (isFormOpen = false)}>Cancel</Button>
-				<Button type="submit" disabled={$delayed}>
-					{#if $delayed}
-						<span class="flex items-center gap-2">
-							<Spinner />
-							Saving...
-						</span>
-					{:else}
-						{editingCard ? 'Update Card' : 'Create Card'}
-					{/if}
-				</Button>
-			</Sheet.Footer>
-		</form>
-	</Sheet.Content>
-</Sheet.Root>
+					<Form.Field {form} name="prompt">
+						<Form.Control>
+							{#snippet children({ props })}
+								<Form.Label>Card Prompt</Form.Label>
+								<Textarea
+									{...props}
+									bind:value={$formData.prompt}
+									rows={6}
+									placeholder="Describe what the player should think about, do, or discover..."
+								/>
+							{/snippet}
+						</Form.Control>
+						<Form.FieldErrors />
+					</Form.Field>
+				</div>
+
+				<Sheet.Footer class="flex flex-row justify-end gap-2">
+					<Button type="button" variant="outline" onclick={() => (isFormOpen = false)}
+						>Cancel</Button
+					>
+					<Button type="submit" disabled={$delayed}>
+						{#if $delayed}
+							<span class="flex items-center gap-2">
+								<Spinner />
+								Saving...
+							</span>
+						{:else}
+							{editingCard ? 'Update Card' : 'Create Card'}
+						{/if}
+					</Button>
+				</Sheet.Footer>
+			</form>
+		</Sheet.Content>
+	</Sheet.Root>
+{/if}
