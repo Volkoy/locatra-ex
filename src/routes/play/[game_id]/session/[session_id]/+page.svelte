@@ -40,7 +40,7 @@
 		card_id: number | null;
 		content: string;
 	};
-	type Poi = { id: number; name: string; longitude: number; latitude: number; radius?: number };
+	type Poi = { id: number; name: string; longitude: number; latitude: number; radius?: number; type?: string };
 	type Card = { id: number; title: string | null; prompt: string | null; type: string | null };
 
 	const getCardHeaderBg = (type: string | null) => {
@@ -438,12 +438,14 @@ const HERO_STEPS = [
 	// Auto-select nearby POI (GPS mode)
 	$effect(() => {
 		if (session.play_mode !== 'gps' || cardAnimState !== 'hidden') return;
-		const firstNearby = (pois as Poi[]).find(
+		const nearbyUnvisited = (pois as Poi[]).filter(
 			(p) => nearbyPoiIds.has(p.id) && !(visitedPoiIds as number[]).includes(p.id)
 		);
-		if (firstNearby && selectedPoiId !== firstNearby.id) {
-			selectedPoiId = firstNearby.id;
-		}
+		if (!nearbyUnvisited.length || !userLocation) return;
+		const closest = nearbyUnvisited.reduce((a, b) =>
+			haversineMeters(userLocation, a) <= haversineMeters(userLocation, b) ? a : b
+		);
+		if (selectedPoiId !== closest.id) selectedPoiId = closest.id;
 	});
 
 	// Persist unlock state across refreshes
@@ -514,6 +516,9 @@ const HERO_STEPS = [
 	// ── Derived locations ────────────────────────────────────────────────────
 
 	let selectedPoi = $derived((pois as Poi[]).find((p) => p.id === selectedPoiId) ?? null);
+	const nearestPoiColor = $derived(
+		selectedPoi?.type ? getPoiMarkerColor(selectedPoi.type) : ''
+	);
 
 	let nearestUnvisited = $derived.by((): Poi | null => {
 		const unvisited = (pois as Poi[]).filter((p) => !(visitedPoiIds as number[]).includes(p.id));
@@ -647,14 +652,21 @@ const HERO_STEPS = [
 			{@const PoiIcon = getPoiIcon(poi.type)}
 			{@const poiColor = getPoiMarkerColor(poi.type)}
 			<Marker lngLat={[poi.longitude, poi.latitude]}>
-				<button
-					onclick={() => handlePoiClick(poi.id)}
-					class="flex size-10 items-center justify-center rounded-full p-2 text-white shadow-lg ring-2 ring-white transition-all
-						{isVisited ? 'bg-gray-300' : isSelected ? 'scale-110 ' + poiColor : poiColor}"
-					title={poi.name}
-				>
-					<PoiIcon class="size-6" strokeWidth={2} />
-				</button>
+				<div class="flex flex-col items-center gap-1">
+					<button
+						onclick={() => handlePoiClick(poi.id)}
+						class="flex size-10 items-center justify-center rounded-full p-2 text-white shadow-lg ring-2 ring-white transition-all
+							{isVisited ? 'bg-gray-300' : isSelected ? 'scale-110 ' + poiColor : poiColor}"
+						title={poi.name}
+					>
+						<PoiIcon class="size-6" strokeWidth={2} />
+					</button>
+					{#if nearbyPoiIds.has(poi.id)}
+						<span class="whitespace-nowrap rounded-full bg-white px-2 py-0.5 text-xs font-semibold text-dark-green shadow-md">
+							{poi.name}
+						</span>
+					{/if}
+				</div>
 			</Marker>
 		{/each}
 
@@ -954,7 +966,7 @@ const HERO_STEPS = [
 					<Button
 						size="lg"
 						type="submit"
-						class="w-full max-w-xs rounded-full font-bold"
+						class="w-full max-w-xs rounded-full font-bold !text-white {nearestPoiColor ? "!" + nearestPoiColor : ""}"
 						disabled={isUnlocking}
 					>
 						{isUnlocking ? 'Unlocking…' : `Unlock ${selectedPoi?.name ?? 'location'}`}
@@ -981,7 +993,7 @@ const HERO_STEPS = [
 				<Button
 					size="lg"
 					type="submit"
-					class="w-full max-w-xs rounded-full font-bold"
+					class="w-full max-w-xs rounded-full font-bold !text-white {nearestPoiColor ? "!" + nearestPoiColor : ""}"
 					disabled={isUnlocking}
 				>
 					{isUnlocking ? 'Unlocking…' : `Unlock ${selectedPoi?.name ?? 'location'}`}
