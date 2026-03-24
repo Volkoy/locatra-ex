@@ -388,9 +388,9 @@ const HERO_STEPS = [
 		const lng = pos.coords.longitude;
 		const lat = pos.coords.latitude;
 		userLocation = { lng, lat };
-		if (map && lng != null && lat != null) {
-			map.easeTo({ center: [lng, lat], duration: 500 });
-		}
+		// Do NOT call map.easeTo here — GeolocateControl with trackUserLocation=true
+		// already handles centering on each GPS update, including respecting user panning.
+		// A second easeTo call fights the control and prevents the user from panning/zooming.
 		nearbyPoiIds.clear();
 		for (const poi of pois as Poi[]) {
 			if (!(visitedPoiIds as number[]).includes(poi.id)) {
@@ -401,8 +401,6 @@ const HERO_STEPS = [
 	}
 
 	let hasAbsoluteOrientation = false;
-	let lastOrientationUpdate = 0;
-	const ORIENTATION_THROTTLE_MS = 100; // ~10fps for bearing updates
 
 	function handleOrientation(e: DeviceOrientationEvent) {
 		// Prefer absolute events once we get real data from them; ignore relative fallback after that
@@ -418,13 +416,10 @@ const HERO_STEPS = [
 		if (e.absolute && h !== null) hasAbsoluteOrientation = true;
 
 		if (h !== null) {
-			heading = h; // heading used for compass needle UI — always update
-			// Throttle map bearing updates to avoid flooding Svelte reactivity during touch
-			const now = Date.now();
-			if (now - lastOrientationUpdate >= ORIENTATION_THROTTLE_MS) {
-				lastOrientationUpdate = now;
-				mapBearing = h;
-			}
+			// Only update the compass needle UI — do NOT drive mapBearing from orientation.
+			// Rotating the map from device sensors causes jitter, fights touch gestures,
+			// and makes the map uncontrollable on Android. Map bearing is user-controlled only.
+			heading = h;
 		}
 	}
 
@@ -450,7 +445,7 @@ const HERO_STEPS = [
 
 	onMount(() => {
 		if (session.play_mode === 'gps') {
-			// Compass / heading — drives mapBearing and bottom compass needle.
+			// Compass / heading — drives the compass needle UI (heading state only).
 			// Register both absolute (Android/real device) and relative (Chrome DevTools simulation).
 			type IOSDeviceOrientationEvent = typeof DeviceOrientationEvent & { requestPermission?: () => Promise<string> };
 			if (typeof (DeviceOrientationEvent as IOSDeviceOrientationEvent).requestPermission === 'function') {
