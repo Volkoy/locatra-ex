@@ -401,6 +401,9 @@ const HERO_STEPS = [
 	}
 
 	let hasAbsoluteOrientation = false;
+	let lastOrientationUpdate = 0;
+	const ORIENTATION_THROTTLE_MS = 500; // max 2 bearing updates per second
+	const BEARING_MIN_CHANGE_DEG = 5; // ignore jitter smaller than 5°
 
 	function handleOrientation(e: DeviceOrientationEvent) {
 		// Prefer absolute events once we get real data from them; ignore relative fallback after that
@@ -416,10 +419,19 @@ const HERO_STEPS = [
 		if (e.absolute && h !== null) hasAbsoluteOrientation = true;
 
 		if (h !== null) {
-			// Only update the compass needle UI — do NOT drive mapBearing from orientation.
-			// Rotating the map from device sensors causes jitter, fights touch gestures,
-			// and makes the map uncontrollable on Android. Map bearing is user-controlled only.
-			heading = h;
+			heading = h; // compass needle UI — always current
+
+			const now = Date.now();
+			if (now - lastOrientationUpdate >= ORIENTATION_THROTTLE_MS) {
+				// Compute shortest angular distance to avoid 359°→1° thrash
+				let diff = h - mapBearing;
+				if (diff > 180) diff -= 360;
+				if (diff < -180) diff += 360;
+				if (Math.abs(diff) >= BEARING_MIN_CHANGE_DEG) {
+					lastOrientationUpdate = now;
+					mapBearing = h;
+				}
+			}
 		}
 	}
 
