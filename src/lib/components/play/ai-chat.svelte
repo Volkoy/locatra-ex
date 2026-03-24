@@ -1,6 +1,6 @@
 <script lang="ts">
-	import { X, Send } from 'lucide-svelte';
-	import { tick } from 'svelte';
+	import { onMount } from 'svelte';
+	import { SvelteSet } from 'svelte/reactivity';
 
 	type Message = { role: 'user' | 'assistant'; content: string };
 
@@ -10,31 +10,60 @@
 		currentHeroStep,
 		currentCard,
 		companionName,
-		companionAvatarUrl
+		companionAvatarUrl,
+		isOpen = $bindable(false),
+		messages = $bindable<Message[]>([]),
+		isLoading = $bindable(false)
 	}: {
 		sessionId: string;
 		nearbyPoiId: number | null;
 		currentHeroStep: string | null;
-		currentCard: { id: number; title: string | null; prompt: string | null; type: string | null } | null;
+		currentCard: {
+			id: number;
+			title: string | null;
+			prompt: string | null;
+			type: string | null;
+		} | null;
 		companionName: string;
 		companionAvatarUrl: string | null;
+		isOpen?: boolean;
+		messages?: Message[];
+		isLoading?: boolean;
 	} = $props();
 
-	let messages = $state<Message[]>([]);
-	let input = $state('');
-	let isOpen = $state(false);
-	let isLoading = $state(false);
 	let lastProactiveMessage = $state<string | null>(null);
-	const proactivePoisSeen = new Set<number>();
+	const proactivePoisSeen = new SvelteSet<number>();
 
-	let messagesEl: HTMLElement | null = $state(null);
+	// Context messages — sent to Groq but never shown in the UI.
+	// Seeded once on mount (full game context), then appended with small deltas
+	// (new POI arrived, new segment written) so the model always has up-to-date info
+	// without re-fetching everything from the DB on every message.
+	let contextMessages = $state<Message[]>([]);
+	let contextInitialized = $state(false);
 
-	async function scrollToBottom() {
-		await tick();
-		if (messagesEl) messagesEl.scrollTop = messagesEl.scrollHeight;
-	}
+	const initial = companionName.charAt(0).toUpperCase();
 
-	async function fetchResponse(proactive: boolean) {
+	onMount(async () => {
+		try {
+			const res = await fetch(`/api/chat/init?sessionId=${encodeURIComponent(sessionId)}`);
+			if (res.ok) {
+				const data = (await res.json()) as { context?: string };
+				if (data.context) {
+					contextMessages = [
+						{
+							role: 'user',
+							content: `[GAME CONTEXT — remember this throughout our conversation]\n${data.context}`
+						}
+					];
+				}
+			}
+		} catch (e) {
+			console.error('Context init error:', e);
+		}
+		contextInitialized = true;
+	});
+
+	async function fetchResponse(proactive: boolean, proactiveType?: 'poi' | 'segment') {
 		isLoading = true;
 		try {
 			const res = await fetch('/api/chat', {
@@ -42,21 +71,22 @@
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({
 					sessionId,
+					contextMessages,
 					messages,
 					nearbyPoiId,
 					currentHeroStep,
 					currentCard,
-					proactive
+					proactive,
+					proactiveType
 				})
 			});
-			const data = await res.json();
+			const data = (await res.json()) as { message?: string };
 			if (data.message) {
 				messages = [...messages, { role: 'assistant', content: data.message }];
 				if (!isOpen) {
 					lastProactiveMessage = data.message;
 					setTimeout(() => (lastProactiveMessage = null), 3000);
 				}
-				scrollToBottom();
 			}
 		} catch (e) {
 			console.error('Chat fetch error:', e);
@@ -65,69 +95,68 @@
 		}
 	}
 
-	async function send() {
-		const text = input.trim();
-		if (!text || isLoading) return;
-		input = '';
+	export async function send(text: string) {
 		messages = [...messages, { role: 'user', content: text }];
-		scrollToBottom();
 		await fetchResponse(false);
 	}
 
-	function onKeyDown(e: KeyboardEvent) {
-		if (e.key === 'Enter' && !e.shiftKey) {
-			e.preventDefault();
-			send();
-		}
-	}
-
-	function openChat() {
+	export function openChat() {
 		isOpen = true;
 		lastProactiveMessage = null;
-		scrollToBottom();
 	}
 
-	// Proactive message when entering a new POI
+	export async function commentOnSegment(content: string) {
+		// Append delta: only the new segment, not the full story
+		contextMessages = [
+			...contextMessages,
+			{ role: 'user', content: `[CONTEXT UPDATE] Player just wrote a new story segment: "${content}"` }
+		];
+		await fetchResponse(true, 'segment');
+	}
+
 	$effect(() => {
+		if (!contextInitialized) return;
 		if (nearbyPoiId !== null && !proactivePoisSeen.has(nearbyPoiId)) {
 			proactivePoisSeen.add(nearbyPoiId);
-			fetchResponse(true);
+			fetchResponse(true, 'poi');
 		}
 	});
-
-	const initial = companionName.charAt(0).toUpperCase();
 </script>
 
-<!-- Trigger button — placed in top bar by parent via absolute positioning -->
-{#if !isOpen}
-	<button
-		onclick={openChat}
-		class="relative flex size-8 items-center justify-center rounded-full bg-white/20 text-white transition-colors hover:bg-white/30 active:bg-white/40"
-		aria-label="Open companion chat"
-	>
-		{#if companionAvatarUrl}
-			<img src={companionAvatarUrl} alt={companionName} class="size-full rounded-full object-cover" />
-		{:else}
-			<span class="text-xs font-bold">{initial}</span>
-		{/if}
-		{#if lastProactiveMessage}
-			<span class="absolute -top-0.5 -right-0.5 size-2.5 rounded-full border border-dark-green bg-destructive"></span>
-		{/if}
-	</button>
-{:else}
-	<div class="size-8"></div>
-{/if}
+<!-- Trigger button -->
+<button
+	onclick={openChat}
+	class="relative flex size-11 items-center justify-center rounded-full bg-white text-dark-green transition-colors hover:bg-white/90 active:bg-white/80"
+	aria-label="Open companion chat"
+>
+	{#if companionAvatarUrl}
+		<img src={companionAvatarUrl} alt={companionName} class="size-full rounded-full object-cover" />
+	{:else}
+		<span class="text-sm font-bold">{initial}</span>
+	{/if}
+	{#if lastProactiveMessage}
+		<span
+			class="absolute -top-0.5 -right-0.5 size-2.5 rounded-full border border-white bg-destructive"
+		></span>
+	{/if}
+</button>
 
-<!-- Speech bubble — below and to the right of the top-left button -->
+<!-- Speech bubble -->
 {#if lastProactiveMessage && !isOpen}
-	<div class="absolute top-16 left-2 z-30 w-64">
+	<div class="absolute top-14 left-2 z-30 w-64">
 		<button onclick={openChat} class="w-full text-left" aria-label="Open companion chat">
 			<div class="relative rounded-2xl border border-dark-green bg-white px-4 py-3 shadow-xl">
 				<div class="mb-2 flex items-center gap-2">
 					{#if companionAvatarUrl}
-						<img src={companionAvatarUrl} alt={companionName} class="size-6 rounded-full object-cover" />
+						<img
+							src={companionAvatarUrl}
+							alt={companionName}
+							class="size-6 rounded-full object-cover"
+						/>
 					{:else}
-						<div class="flex size-6 shrink-0 items-center justify-center rounded-full bg-dark-green text-xs font-bold text-white">
+						<div
+							class="flex size-6 shrink-0 items-center justify-center rounded-full bg-dark-green text-xs font-bold text-white"
+						>
 							{initial}
 						</div>
 					{/if}
@@ -135,122 +164,10 @@
 				</div>
 				<p class="line-clamp-3 text-sm leading-relaxed text-foreground">{lastProactiveMessage}</p>
 				<p class="mt-2 text-xs text-muted-foreground">Tap to reply…</p>
-				<!-- Tail pointing up-left -->
 				<div class="absolute -top-2 left-4">
 					<div class="size-4 rotate-45 border-t border-l border-dark-green bg-white"></div>
 				</div>
 			</div>
 		</button>
-	</div>
-{/if}
-
-<!-- Full-screen chat overlay -->
-{#if isOpen}
-	<!-- Backdrop -->
-	<div
-		class="absolute inset-0 z-40 bg-black/30 backdrop-blur-sm"
-		role="presentation"
-		onclick={() => (isOpen = false)}
-	></div>
-
-	<!-- Chat panel — centered, almost full screen -->
-	<div
-		class="absolute inset-x-3 bottom-3 z-50 flex flex-col overflow-hidden rounded-2xl border border-dark-green bg-white shadow-2xl"
-		style="top: max(env(safe-area-inset-top, 0px) + 12px, 12px); max-height: calc(100vh - 24px);"
-	>
-		<!-- Header -->
-		<div class="flex shrink-0 items-center gap-3 border-b border-dark-green bg-dark-green px-4 py-3">
-			{#if companionAvatarUrl}
-				<img
-					src={companionAvatarUrl}
-					alt={companionName}
-					class="size-9 rounded-full object-cover ring-2 ring-white/30"
-				/>
-			{:else}
-				<div class="flex size-9 shrink-0 items-center justify-center rounded-full bg-white/20 text-sm font-bold text-white">
-					{initial}
-				</div>
-			{/if}
-			<div class="flex-1">
-				<p class="text-sm font-semibold text-white">{companionName}</p>
-				<p class="text-xs text-white/70">Your guide</p>
-			</div>
-			<button onclick={() => (isOpen = false)} aria-label="Close chat" class="rounded-full p-1 text-white/70 hover:bg-white/10 hover:text-white">
-				<X class="size-5" />
-			</button>
-		</div>
-
-		<!-- Messages -->
-		<div
-			bind:this={messagesEl}
-			class="flex flex-1 flex-col gap-3 overflow-y-auto p-4"
-		>
-			{#if messages.length === 0 && !isLoading}
-				<div class="flex flex-1 flex-col items-center justify-center gap-3 py-12 text-center">
-					{#if companionAvatarUrl}
-						<img src={companionAvatarUrl} alt={companionName} class="size-16 rounded-full object-cover" />
-					{:else}
-						<div class="flex size-16 items-center justify-center rounded-full bg-dark-green text-2xl font-bold text-white">
-							{initial}
-						</div>
-					{/if}
-					<div>
-						<p class="font-semibold text-foreground">{companionName}</p>
-						<p class="mt-1 text-sm text-muted-foreground">Say hello to your guide!</p>
-					</div>
-				</div>
-			{/if}
-			{#each messages as msg (msg)}
-				{#if msg.role === 'assistant'}
-					<div class="flex items-end gap-2">
-						<div class="flex size-7 shrink-0 items-center justify-center rounded-full bg-dark-green text-xs font-bold text-white">
-							{initial}
-						</div>
-						<div class="max-w-[80%] rounded-2xl rounded-bl-sm border border-dark-green/20 bg-muted/40 px-4 py-2.5 text-sm leading-relaxed">
-							{msg.content}
-						</div>
-					</div>
-				{:else}
-					<div class="flex justify-end">
-						<div class="max-w-[80%] rounded-2xl rounded-br-sm bg-dark-green px-4 py-2.5 text-sm leading-relaxed text-white">
-							{msg.content}
-						</div>
-					</div>
-				{/if}
-			{/each}
-			{#if isLoading}
-				<div class="flex items-end gap-2">
-					<div class="flex size-7 shrink-0 items-center justify-center rounded-full bg-dark-green text-xs font-bold text-white">
-						{initial}
-					</div>
-					<div class="rounded-2xl rounded-bl-sm border border-dark-green/20 bg-muted/40 px-4 py-3">
-						<span class="flex gap-1">
-							<span class="size-2 animate-bounce rounded-full bg-dark-green/50" style="animation-delay:0ms"></span>
-							<span class="size-2 animate-bounce rounded-full bg-dark-green/50" style="animation-delay:150ms"></span>
-							<span class="size-2 animate-bounce rounded-full bg-dark-green/50" style="animation-delay:300ms"></span>
-						</span>
-					</div>
-				</div>
-			{/if}
-		</div>
-
-		<!-- Input -->
-		<div class="flex shrink-0 items-center gap-2 border-t border-dark-green/20 px-4 py-3">
-			<input
-				type="text"
-				bind:value={input}
-				onkeydown={onKeyDown}
-				placeholder="Ask {companionName}…"
-				class="flex-1 rounded-full border border-dark-green/30 bg-muted/20 px-4 py-2 text-sm outline-none focus:border-dark-green"
-			/>
-			<button
-				onclick={send}
-				disabled={!input.trim() || isLoading}
-				class="flex size-9 shrink-0 items-center justify-center rounded-full bg-dark-green text-white disabled:opacity-40"
-				aria-label="Send"
-			>
-				<Send class="size-4" />
-			</button>
-		</div>
 	</div>
 {/if}

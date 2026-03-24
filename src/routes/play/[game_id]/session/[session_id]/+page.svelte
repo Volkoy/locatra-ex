@@ -30,6 +30,7 @@
 	import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
 	import { Separator } from '$lib/components/ui/separator';
 	import AiChat from '$lib/components/play/ai-chat.svelte';
+	import AiChatSheet from '$lib/components/play/ai-chat-sheet.svelte';
 
 	type Segment = {
 		id: number;
@@ -293,6 +294,13 @@ const HERO_STEPS = [
 
 	// Story sheet
 	let sheetOpen = $state(data.session.play_mode === 'remote' && !data.hasIntroduction);
+
+	// AI companion chat state — shared between trigger (top bar) and sheet (root level)
+	type ChatMessage = { role: 'user' | 'assistant'; content: string };
+	let chatIsOpen = $state(false);
+	let chatMessages = $state<ChatMessage[]>([]);
+	let chatIsLoading = $state(false);
+	let aiChatRef = $state<{ send: (text: string) => Promise<void>; commentOnSegment: (content: string) => Promise<void> } | null>(null);
 
 	// Scroll refs
 	let scrollContainer = $state<HTMLElement | null>(null);
@@ -671,12 +679,16 @@ const HERO_STEPS = [
 			<div class="absolute top-0 left-0 mt-2">
 				{#if companion}
 					<AiChat
+						bind:this={aiChatRef}
 						sessionId={session_id}
 						{nearbyPoiId}
 						currentHeroStep={session.current_hero_step ?? null}
 						currentCard={selectedCard}
 						companionName={companion.name}
 						companionAvatarUrl={companion.avatar_url}
+						bind:isOpen={chatIsOpen}
+						bind:messages={chatMessages}
+						bind:isLoading={chatIsLoading}
 					/>
 				{/if}
 			</div>
@@ -960,6 +972,18 @@ const HERO_STEPS = [
 		</div>
 	{/if}
 
+	<!-- ── AI Companion sheet (rendered at root to escape top bar stacking context) ── -->
+	{#if companion}
+		<AiChatSheet
+			bind:isOpen={chatIsOpen}
+			bind:messages={chatMessages}
+			isLoading={chatIsLoading}
+			companionName={companion.name}
+			companionAvatarUrl={companion.avatar_url}
+			onSend={(text) => aiChatRef?.send(text)}
+		/>
+	{/if}
+
 	<!-- ── Story sheet ────────────────────────────────────────────────── -->
 	<div
 		class="absolute right-0 bottom-0 left-0 z-20 mx-auto max-w-3xl transition-[height] duration-300 ease-out"
@@ -1170,6 +1194,7 @@ const HERO_STEPS = [
 										action="?/saveSegment"
 										use:enhance={() => {
 											isSavingStep = true;
+											const savedContent = stepContent;
 											return async ({ result, update }) => {
 												isSavingStep = false;
 												if (result.type === 'success') {
@@ -1187,6 +1212,7 @@ const HERO_STEPS = [
 													await tick();
 													if (d?.completed) scrollToSection('reflection');
 													else if (d?.nextStep) scrollToSection(d.nextStep);
+													aiChatRef?.commentOnSegment(savedContent);
 												} else {
 													await update();
 												}
