@@ -662,6 +662,17 @@ const HERO_STEPS = [
 		{/if}
 	</MapLibre>
 
+	<!-- ── Custom locate button (GPS mode) ───────────────────────────── -->
+	{#if session.play_mode === 'gps'}
+		<button
+			onclick={() => geolocateControl?.trigger()}
+			class="absolute right-4 top-1/2 z-[25] flex size-11 -translate-y-1/2 items-center justify-center rounded-full bg-white shadow-lg transition-colors hover:bg-white/90 active:bg-white/80"
+			aria-label="Center on my location"
+		>
+			<Navigation2 class="size-5 text-dark-green" />
+		</button>
+	{/if}
+
 	<!-- ── Gradient vignettes ──────────────────────────────────────────── -->
 	<div
 		class="pointer-events-none absolute inset-x-0 top-0 z-[5] h-40 bg-gradient-to-b from-dark-green/60 to-transparent"
@@ -1353,8 +1364,8 @@ const HERO_STEPS = [
 		transform: rotateY(180deg);
 	}
 
-	/* Push built-in MapLibre controls above the bottom action bar (~120px) */
-	:global(.maplibregl-ctrl-bottom-right) {
-		bottom: 120px;
+	/* Hide built-in GeolocateControl button — replaced by custom positioned button */
+	:global(.maplibregl-ctrl-geolocate) {
+		display: none !important;
 	}
 </style>
