@@ -52,7 +52,10 @@
 			const data = await res.json();
 			if (data.message) {
 				messages = [...messages, { role: 'assistant', content: data.message }];
-				if (!isOpen) lastProactiveMessage = data.message;
+				if (!isOpen) {
+					lastProactiveMessage = data.message;
+					setTimeout(() => (lastProactiveMessage = null), 3000);
+				}
 				scrollToBottom();
 			}
 		} catch (e) {
@@ -95,21 +98,36 @@
 	const initial = companionName.charAt(0).toUpperCase();
 </script>
 
-<!-- Speech bubble (proactive message preview, shown when chat is closed) -->
+<!-- Trigger button — placed in top bar by parent via absolute positioning -->
+{#if !isOpen}
+	<button
+		onclick={openChat}
+		class="relative flex size-8 items-center justify-center rounded-full bg-white/20 text-white transition-colors hover:bg-white/30 active:bg-white/40"
+		aria-label="Open companion chat"
+	>
+		{#if companionAvatarUrl}
+			<img src={companionAvatarUrl} alt={companionName} class="size-full rounded-full object-cover" />
+		{:else}
+			<span class="text-xs font-bold">{initial}</span>
+		{/if}
+		{#if lastProactiveMessage}
+			<span class="absolute -top-0.5 -right-0.5 size-2.5 rounded-full border border-dark-green bg-destructive"></span>
+		{/if}
+	</button>
+{:else}
+	<div class="size-8"></div>
+{/if}
+
+<!-- Speech bubble — below and to the right of the top-left button -->
 {#if lastProactiveMessage && !isOpen}
-	<div class="absolute left-20 top-1/2 z-30 w-64 -translate-y-1/2">
-		<button
-			onclick={openChat}
-			class="w-full text-left"
-			aria-label="Open companion chat"
-		>
+	<div class="absolute top-16 left-2 z-30 w-64">
+		<button onclick={openChat} class="w-full text-left" aria-label="Open companion chat">
 			<div class="relative rounded-2xl border border-dark-green bg-white px-4 py-3 shadow-xl">
-				<!-- Avatar + name -->
 				<div class="mb-2 flex items-center gap-2">
 					{#if companionAvatarUrl}
-						<img src={companionAvatarUrl} alt={companionName} class="size-7 rounded-full object-cover" />
+						<img src={companionAvatarUrl} alt={companionName} class="size-6 rounded-full object-cover" />
 					{:else}
-						<div class="flex size-7 shrink-0 items-center justify-center rounded-full bg-dark-green text-xs font-bold text-white">
+						<div class="flex size-6 shrink-0 items-center justify-center rounded-full bg-dark-green text-xs font-bold text-white">
 							{initial}
 						</div>
 					{/if}
@@ -117,31 +135,13 @@
 				</div>
 				<p class="line-clamp-3 text-sm leading-relaxed text-foreground">{lastProactiveMessage}</p>
 				<p class="mt-2 text-xs text-muted-foreground">Tap to reply…</p>
-				<!-- Bubble tail pointing left -->
-				<div class="absolute top-1/2 -left-2 -translate-y-1/2">
-					<div class="size-4 rotate-45 border-b border-l border-dark-green bg-white"></div>
+				<!-- Tail pointing up-left -->
+				<div class="absolute -top-2 left-4">
+					<div class="size-4 rotate-45 border-t border-l border-dark-green bg-white"></div>
 				</div>
 			</div>
 		</button>
 	</div>
-{/if}
-
-<!-- Floating companion button -->
-{#if !isOpen}
-	<button
-		onclick={openChat}
-		class="absolute left-3 top-1/2 z-30 flex size-14 -translate-y-1/2 items-center justify-center rounded-full bg-dark-green text-white shadow-lg transition-transform hover:scale-105 active:scale-95"
-		aria-label="Open companion chat"
-	>
-		{#if companionAvatarUrl}
-			<img src={companionAvatarUrl} alt={companionName} class="size-full rounded-full object-cover" />
-		{:else}
-			<span class="text-lg font-bold">{initial}</span>
-		{/if}
-		{#if lastProactiveMessage}
-			<span class="absolute -top-1 -right-1 size-3.5 rounded-full border-2 border-white bg-destructive"></span>
-		{/if}
-	</button>
 {/if}
 
 <!-- Full-screen chat overlay -->

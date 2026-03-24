@@ -377,15 +377,6 @@ const HERO_STEPS = [
 	}
 
 	function updateNearby(pos: GeolocationPosition) {
-		console.log('[geolocate]', {
-			lat: pos.coords.latitude,
-			lng: pos.coords.longitude,
-			accuracy: pos.coords.accuracy,
-			heading: pos.coords.heading,
-			speed: pos.coords.speed,
-			altitude: pos.coords.altitude,
-			altitudeAccuracy: pos.coords.altitudeAccuracy
-		});
 		const lng = pos.coords.longitude;
 		const lat = pos.coords.latitude;
 		userLocation = { lng, lat };
@@ -402,6 +393,8 @@ const HERO_STEPS = [
 	}
 
 	let hasAbsoluteOrientation = false;
+	let lastOrientationUpdate = 0;
+	const ORIENTATION_THROTTLE_MS = 100; // ~10fps for bearing updates
 
 	function handleOrientation(e: DeviceOrientationEvent) {
 		// Prefer absolute events once we get real data from them; ignore relative fallback after that
@@ -414,11 +407,16 @@ const HERO_STEPS = [
 		} else if (e.alpha !== null) {
 			h = (360 - e.alpha) % 360;
 		}
-		// Only mark absolute as available once we actually receive useful data from it
 		if (e.absolute && h !== null) hasAbsoluteOrientation = true;
+
 		if (h !== null) {
-			heading = h;
-			mapBearing = h;
+			heading = h; // heading used for compass needle UI — always update
+			// Throttle map bearing updates to avoid flooding Svelte reactivity during touch
+			const now = Date.now();
+			if (now - lastOrientationUpdate >= ORIENTATION_THROTTLE_MS) {
+				lastOrientationUpdate = now;
+				mapBearing = h;
+			}
 		}
 	}
 
@@ -601,7 +599,7 @@ const HERO_STEPS = [
 	<!-- Map -->
 	<MapLibre
 		style="https://tiles.openfreemap.org/styles/liberty"
-		class="h-full w-full"
+		class="h-full w-full touch-none"
 		attributionControl={false}
 		bind:center={mapCenter}
 		zoom={gameLocation ? 14 : 10}
@@ -669,6 +667,20 @@ const HERO_STEPS = [
 		class="absolute top-0 right-0 left-0 z-10 mx-auto max-w-3xl rounded-b-3xl bg-dark-green p-2 text-white"
 	>
 		<div class="relative flex items-center justify-center">
+			<!-- Companion chat button (top-left) -->
+			<div class="absolute top-0 left-0 mt-2">
+				{#if companion}
+					<AiChat
+						sessionId={session_id}
+						{nearbyPoiId}
+						currentHeroStep={session.current_hero_step ?? null}
+						currentCard={selectedCard}
+						companionName={companion.name}
+						companionAvatarUrl={companion.avatar_url}
+					/>
+				{/if}
+			</div>
+
 			<!-- Options menu -->
 			<div class="absolute top-0 right-0 mt-2">
 				<DropdownMenu.Root>
@@ -946,18 +958,6 @@ const HERO_STEPS = [
 				</Button>
 			</form>
 		</div>
-	{/if}
-
-	<!-- ── AI Companion Chat ──────────────────────────────────────────── -->
-	{#if companion}
-		<AiChat
-			sessionId={session_id}
-			{nearbyPoiId}
-			currentHeroStep={session.current_hero_step ?? null}
-			currentCard={selectedCard}
-			companionName={companion.name}
-			companionAvatarUrl={companion.avatar_url}
-		/>
 	{/if}
 
 	<!-- ── Story sheet ────────────────────────────────────────────────── -->
