@@ -159,7 +159,9 @@
 	// ── Map & GPS state ───────────────────────────────────────────────────────
 
 	let userLocation = $state<{ lng: number; lat: number } | null>(null);
-	$effect(() => { console.log('[GPS] userLocation', userLocation); });
+	$effect(() => {
+		console.log('[GPS] userLocation', userLocation);
+	});
 	let mapCenter = $state<[number, number]>(
 		data.gameLocation ? [data.gameLocation.longitude, data.gameLocation.latitude] : [0, 0]
 	);
@@ -313,6 +315,16 @@
 	let introContent = $state('');
 	let stepContent = $state('');
 	let reflectionContent = $state('');
+
+	// Proximity card expand/collapse (resets when selected POI changes)
+	let proximityCardCollapsed = $state(false);
+	let _lastProximityPoiId = $state<number | null>(null);
+	$effect(() => {
+		if (selectedPoiId !== _lastProximityPoiId) {
+			_lastProximityPoiId = selectedPoiId;
+			proximityCardCollapsed = false;
+		}
+	});
 
 	// Story sheet
 	let sheetOpen = $state(data.session.play_mode === 'remote' && !data.hasIntroduction);
@@ -516,15 +528,21 @@
 		requestAnimationFrame(() => {
 			requestAnimationFrame(() => {
 				cardSlideIn = true;
-				setTimeout(() => { cardAnimState = 'flipping'; }, 500);
-				setTimeout(() => { cardAnimState = 'revealed'; }, 1100);
+				setTimeout(() => {
+					cardAnimState = 'flipping';
+				}, 500);
+				setTimeout(() => {
+					cardAnimState = 'revealed';
+				}, 1100);
 			});
 		});
 	}
 
 	function openSheetForWriting() {
 		cardSlideIn = false;
-		setTimeout(() => { cardAnimState = 'hidden'; }, 300);
+		setTimeout(() => {
+			cardAnimState = 'hidden';
+		}, 300);
 		sheetOpen = true;
 		tick().then(() => {
 			if (session.current_hero_step) scrollToSection(session.current_hero_step);
@@ -634,8 +652,8 @@
 	</MapLibre>
 
 	<!-- ── Top controls ──────────────────────────────────────────────── -->
-	<div class="absolute top-0 right-0 left-0 z-10 mx-auto justify-between p-3">
-		<div class="relative flex items-start">
+	<div class="absolute top-0 right-0 left-0 z-10 p-3">
+		<div class="flex items-start">
 			<!-- Chat trigger + geolocate — far left -->
 			<div class="z-20 flex shrink-0 flex-col items-center gap-8">
 				{#if companion}
@@ -661,7 +679,6 @@
 						onclick={() => {
 							if (userLocation) mapCenter = [userLocation.lng, userLocation.lat];
 						}}
-						class=""
 						aria-label="Center on my location"
 					>
 						<LocateFixed class="size-5" />
@@ -669,40 +686,42 @@
 				{/if}
 			</div>
 
+			<!-- Step indicator — center, constrained to available space -->
+			<div class="flex min-w-0 flex-1 justify-center">
+				<div
+					class="flex min-w-0 items-center gap-2 rounded-full border-2 border-dark-green bg-white p-2 pr-5 shadow-lg"
+				>
+					<div
+						class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border-2 border-dark-green font-bold {currentStepIndicator.className}"
+					>
+						{#if currentStepIndicator.icon}
+							<currentStepIndicator.icon class="h-4 w-4" />
+						{:else}
+							{currentStepIndicator.label}
+						{/if}
+					</div>
+					<div class="flex min-w-0 flex-col gap-0.5">
+						<p class="text-sm leading-tight font-black text-dark-green">
+							{currentStepTitle}
+						</p>
+						<div class="flex min-w-0 items-center gap-1 text-xs text-black">
+							<currentGoal.icon class="h-3 w-3 shrink-0" />
+							<span class="font-medium">{currentGoal.text}</span>
+						</div>
+					</div>
+				</div>
+			</div>
+
 			<!-- Exit button — far right -->
 			<Button
 				size="icon-lg"
 				variant="destructive"
 				onclick={handleExit}
-				class="ml-auto shrink-0"
+				class="shrink-0"
 				aria-label="Exit game"
 			>
 				<LogOut class="size-5" />
 			</Button>
-		</div>
-	</div>
-
-	<!-- ── Step indicator — below top bar, centered ─────────────────── -->
-	<div class="absolute top-0 left-1/2 z-10 m-3 -translate-x-1/2">
-		<div
-			class="flex items-center gap-2 rounded-full border-2 border-dark-green bg-primary-foreground p-3 pr-6 shadow-lg"
-		>
-			<div
-				class="flex h-12 w-12 shrink-0 items-center justify-center rounded-full border-2 border-dark-green font-bold {currentStepIndicator.className}"
-			>
-				{#if currentStepIndicator.icon}
-					<currentStepIndicator.icon class="h-5 w-5" />
-				{:else}
-					{currentStepIndicator.label}
-				{/if}
-			</div>
-			<div class="flex flex-col items-start justify-items-start gap-1">
-				<p class="text-lg leading-tight font-black text-dark-green">{currentStepTitle}</p>
-				<div class="flex items-center gap-1 text-sm text-black">
-					<currentGoal.icon class="h-4 w-4 shrink-0" />
-					<span class="max-w-48 truncate font-medium">{currentGoal.text}</span>
-				</div>
-			</div>
 		</div>
 	</div>
 
@@ -723,19 +742,23 @@
 						{@const headerBg = getCardHeaderBg(selectedCard.type)}
 						<!-- Back face -->
 						<div class="card-face flex flex-col items-center justify-center {headerBg}">
-							<div class="flex h-20 w-20 items-center justify-center rounded-full border-4 border-white/20">
+							<div
+								class="flex h-20 w-20 items-center justify-center rounded-full border-4 border-white/20"
+							>
 								<CardIcon class="h-10 w-10 text-white" />
 							</div>
 							<div class="mt-5 h-1 w-12 rounded-full bg-white/25"></div>
 							<div class="mt-2 h-1 w-7 rounded-full bg-white/25"></div>
 						</div>
 						<!-- Front face -->
-						<div class="card-face card-front flex flex-col overflow-hidden rounded-xl border-8 border-white shadow-2xl outline-2 outline-gray-200">
+						<div
+							class="card-face card-front flex flex-col overflow-hidden rounded-xl border-8 border-white shadow-2xl outline-2 outline-gray-200"
+						>
 							<div class="flex flex-col items-center gap-2 p-4 {headerBg}">
 								<div class="flex h-14 w-14 items-center justify-center rounded-full bg-white/20">
 									<CardIcon class="h-8 w-8 text-white" />
 								</div>
-								<h3 class="line-clamp-3 text-center text-sm font-bold leading-tight text-white">
+								<h3 class="line-clamp-3 text-center text-sm leading-tight font-bold text-white">
 									{selectedCard.title}
 								</h3>
 							</div>
@@ -794,26 +817,28 @@
 			style="bottom: {sheetBottomStyle}"
 		>
 			<div class="overflow-hidden rounded-2xl border border-dark-green bg-white shadow-xl">
-				<div class="aspect-video w-full">
-					{#if selectedPoi.image_url}
-						<img src={selectedPoi.image_url} alt={selectedPoi.name} class="h-full w-full object-cover" />
-					{:else}
-						<div class="flex h-full w-full items-center justify-center bg-muted text-muted-foreground">
-							<MapPin class="size-5" />
+				{#if canUnlock && proximityCardCollapsed}
+					<!-- Collapsed in-range: just name + unlock button -->
+					<div class="flex items-center gap-2 p-3">
+						<div class="flex min-w-0 flex-1 items-center gap-2">
+							{#if selectedPoi.type}
+								<span
+									class="shrink-0 rounded-full px-2 py-0.5 text-xs font-medium uppercase {getPoiMarkerTypeStyle(
+										selectedPoi.type
+									)}">{selectedPoi.type}</span
+								>
+							{/if}
+							<p class="truncate text-sm font-bold text-dark-green">{selectedPoi.name}</p>
 						</div>
-					{/if}
-				</div>
-				<div class="space-y-2 p-3">
-					<div class="flex items-center gap-2">
-						{#if selectedPoi.type}
-							<span class="rounded-full px-2 py-0.5 text-xs font-medium uppercase {getPoiMarkerTypeStyle(selectedPoi.type)}">{selectedPoi.type}</span>
-						{/if}
-						<p class="line-clamp-1 text-sm font-bold text-dark-green">{selectedPoi.name}</p>
+						<button
+							onclick={() => (proximityCardCollapsed = false)}
+							class="shrink-0 text-xs text-dark-green/60 hover:text-dark-green"
+							aria-label="Expand"
+						>
+							<ChevronDown class="size-4 rotate-180" />
+						</button>
 					</div>
-					{#if session.play_mode === 'gps' && selectedPoiDistanceMeters !== null && selectedPoiRadius !== null}
-						<p class="text-xs text-dark-green/70">{selectedPoiDistanceMeters}m away · {selectedPoiRadius}m unlock radius</p>
-					{/if}
-					{#if canUnlock}
+					<div class="px-3 pb-3">
 						<form method="POST" action="?/unlockPoi" use:enhance={makeUnlockEnhance()}>
 							<input type="hidden" name="poi_id" value={selectedPoiId} />
 							<Button
@@ -825,14 +850,80 @@
 								{isUnlocking ? 'Unlocking…' : `Unlock ${selectedPoi.name}`}
 							</Button>
 						</form>
-					{:else}
-						<p class="text-xs text-dark-green/70">Move closer to unlock this location.</p>
+					</div>
+				{:else}
+					<!-- Image — only shown when in unlock range -->
+					{#if canUnlock}
+						<div class="aspect-video w-full">
+							{#if selectedPoi.image_url}
+								<img
+									src={selectedPoi.image_url}
+									alt={selectedPoi.name}
+									class="h-full w-full object-cover"
+								/>
+							{:else}
+								<div
+									class="flex h-full w-full items-center justify-center bg-muted text-muted-foreground"
+								>
+									<MapPin class="size-5" />
+								</div>
+							{/if}
+						</div>
 					{/if}
-				</div>
+					<div class="space-y-2 p-3">
+						<!-- Name row + collapse toggle (only when in range) -->
+						<div class="flex items-center gap-2">
+							<div class="flex min-w-0 flex-1 items-center gap-2">
+								{#if selectedPoi.type}
+									<span
+										class="shrink-0 rounded-full px-2 py-0.5 text-xs font-medium uppercase {getPoiMarkerTypeStyle(
+											selectedPoi.type
+										)}">{selectedPoi.type}</span
+									>
+								{/if}
+								<p class="truncate text-sm font-bold text-dark-green">{selectedPoi.name}</p>
+							</div>
+							{#if canUnlock}
+								<button
+									onclick={() => (proximityCardCollapsed = true)}
+									class="shrink-0 text-xs text-dark-green/60 hover:text-dark-green"
+									aria-label="Collapse"
+								>
+									<ChevronDown class="size-4" />
+								</button>
+							{/if}
+						</div>
+						<!-- Description (only when in range) -->
+						{#if canUnlock && selectedPoi.description}
+							<p class="text-xs leading-relaxed text-dark-green/70">{selectedPoi.description}</p>
+						{/if}
+						<!-- Distance -->
+						{#if session.play_mode === 'gps' && selectedPoiDistanceMeters !== null && selectedPoiRadius !== null}
+							<p class="text-xs text-dark-green/70">
+								{selectedPoiDistanceMeters}m away · {selectedPoiRadius}m unlock radius
+							</p>
+						{/if}
+						<!-- Action -->
+						{#if canUnlock}
+							<form method="POST" action="?/unlockPoi" use:enhance={makeUnlockEnhance()}>
+								<input type="hidden" name="poi_id" value={selectedPoiId} />
+								<Button
+									type="submit"
+									size="sm"
+									class="w-full font-bold !text-white {nearestPoiOverrideColor}"
+									disabled={isUnlocking}
+								>
+									{isUnlocking ? 'Unlocking…' : `Unlock ${selectedPoi.name}`}
+								</Button>
+							</form>
+						{:else}
+							<p class="text-xs text-dark-green/70">Move closer to unlock this location.</p>
+						{/if}
+					</div>
+				{/if}
 			</div>
 		</div>
 	{/if}
-
 
 	<!-- ── AI Companion sheet (rendered at root to escape top bar stacking context) ── -->
 	{#if companion}
@@ -990,23 +1081,36 @@
 							<div class="min-w-0 flex-1 space-y-3">
 								<!-- Location + Card prompt -->
 								{#if doneSegment?.card_id || (isWriting && selectedCard)}
-									{@const card = doneSegment?.card_id ? ((cards as Card[]).find((c) => c.id === doneSegment!.card_id) ?? null) : selectedCard}
-									{@const poi = doneSegment?.poi_id ? ((pois as Poi[]).find((p) => p.id === doneSegment!.poi_id) ?? null) : selectedPoi}
+									{@const card = doneSegment?.card_id
+										? ((cards as Card[]).find((c) => c.id === doneSegment!.card_id) ?? null)
+										: selectedCard}
+									{@const poi = doneSegment?.poi_id
+										? ((pois as Poi[]).find((p) => p.id === doneSegment!.poi_id) ?? null)
+										: selectedPoi}
 									<div class="flex flex-col gap-2">
 										{#if poi}
 											{@const PoiIcon = getPoiIcon(poi.type ?? '')}
 											{@const poiTypeStyle = getPoiMarkerTypeStyle(poi.type ?? '')}
 											<div class="flex items-center gap-2 rounded-xl border border-gray-200 p-2">
 												{#if poi.image_url}
-													<img src={poi.image_url} alt={poi.name} class="h-12 w-20 shrink-0 rounded-lg object-cover" />
+													<img
+														src={poi.image_url}
+														alt={poi.name}
+														class="h-12 w-20 shrink-0 rounded-lg object-cover"
+													/>
 												{:else}
-													<div class="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-muted">
+													<div
+														class="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-muted"
+													>
 														<PoiIcon class="h-5 w-5 text-muted-foreground" />
 													</div>
 												{/if}
 												<div class="min-w-0">
 													{#if poi.type}
-														<span class="rounded-full px-2 py-0.5 text-xs font-medium uppercase {poiTypeStyle}">{poi.type}</span>
+														<span
+															class="rounded-full px-2 py-0.5 text-xs font-medium uppercase {poiTypeStyle}"
+															>{poi.type}</span
+														>
 													{/if}
 													<p class="truncate text-sm font-semibold text-dark-green">{poi.name}</p>
 												</div>
@@ -1016,13 +1120,17 @@
 											{@const CardIcon = getCardIcon(card.type)}
 											{@const headerBg = getCardHeaderBg(card.type)}
 											<div class="flex items-start gap-3 rounded-xl border border-gray-300 p-3">
-												<div class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full {headerBg}">
+												<div
+													class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full {headerBg}"
+												>
 													<CardIcon class="h-4 w-4 text-white" />
 												</div>
 												<div class="min-w-0">
 													<p class="text-sm font-semibold text-foreground">{card.title}</p>
 													{#if card.prompt}
-														<p class="mt-1 text-sm leading-relaxed text-muted-foreground">{card.prompt}</p>
+														<p class="mt-1 text-sm leading-relaxed text-muted-foreground">
+															{card.prompt}
+														</p>
 													{/if}
 												</div>
 											</div>
