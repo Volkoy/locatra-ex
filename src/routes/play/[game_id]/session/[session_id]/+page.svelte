@@ -653,7 +653,7 @@
 
 	<!-- ── Top controls ──────────────────────────────────────────────── -->
 	<div class="absolute top-0 right-0 left-0 z-10 p-3">
-		<div class="flex items-start">
+		<div class="flex items-start gap-2">
 			<!-- Chat trigger + geolocate — far left -->
 			<div class="z-20 flex shrink-0 flex-col items-center gap-8">
 				{#if companion}
