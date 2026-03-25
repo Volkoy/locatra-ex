@@ -141,19 +141,19 @@
 	const HERO_STEP_GOALS: Record<string, string> = {
 		introduction: "Define the setting and your character. What's your motivation?",
 		call_to_adventure:
-			'Use the prompt to fuel your imagination regarding what calls you to explore and visit the island.',
+			'Use the prompt to fuel your imagination regarding what calls you to explore and begin this journey.',
 		crossing_the_threshold:
-			'Something happens to you and you resolve to start this journey and enter unknown territory...use the prompt to fuel your imagination.',
+			'Something happens and you resolve to start this journey, entering unknown territory. Use the prompt to fuel your imagination.',
 		meeting_the_mentor:
-			'Your path toward your goal is getting harder. You meet a human or more than human entity and receive help that takes you forward. Use the prompt to fuel your imagination.',
+			'Your path toward your goal is getting harder. You meet a human or more-than-human entity and receive help that takes you forward. Use the prompt to fuel your imagination.',
 		trials_and_growth:
-			'You are facing a challenge. Here is where you grow stronger. Use the prompt to inspire what challenge you meet and how you overcome it and how do you grow.',
+			'You are facing a challenge. Here is where you grow stronger. Use the prompt to inspire what challenge you meet, how you overcome it, and how you grow.',
 		death_and_transformation:
-			'You thought you had it all sorted... But you have to face one more ordeal! Use the prompt to inspire what challenge you meet and how you overcome it, and survive, transform. How are you transformed?',
+			'You thought you had it all sorted... But you have to face one more ordeal! Use the prompt to inspire what challenge you meet, how you overcome it, and how you are transformed.',
 		change_and_return:
-			'You have reached your goal, transformed and seen the world with new eyes. You are ready for the next phase of your life. Use the prompt to imagine how you changed and what happens next.',
+			'You have reached your goal, transformed and seeing the world with new eyes. Use the prompt to imagine how you have changed and what happens next.',
 		reflection:
-			'Still embodying your character, please reflect on the wisdom that you will carry forward into the world.'
+			'Still embodying your character, reflect on the wisdom you will carry forward into the world.'
 	};
 
 	// ── Map & GPS state ───────────────────────────────────────────────────────
