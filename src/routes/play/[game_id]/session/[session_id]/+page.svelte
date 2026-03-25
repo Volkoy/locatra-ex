@@ -475,8 +475,9 @@
 			gpsWaiting = true;
 			geoWatchId = navigator.geolocation.watchPosition(
 				(pos) => {
+					gpsWaiting = false; // browser is responding — stop spinner
 					const isFirst = userLocation === null;
-					if (isFirst && pos.coords.accuracy > FIRST_FIX_ACCURACY) return;
+					// Always accept the first fix (desktop uses IP/WiFi with high accuracy numbers)
 					if (!isFirst && pos.coords.accuracy > MAX_ACCURACY) return;
 					const next = { lng: pos.coords.longitude, lat: pos.coords.latitude };
 					userLocation = userLocation
@@ -485,7 +486,6 @@
 								lat: ALPHA * next.lat + (1 - ALPHA) * userLocation.lat
 							}
 						: next;
-					gpsWaiting = false;
 				},
 				() => {
 					userLocation = null;
