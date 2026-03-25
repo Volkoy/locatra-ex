@@ -462,7 +462,7 @@
 	};
 
 	function addTag() {
-		const sanitizedTag = tagInput.trim().replace(/\s+/g, '');
+		const sanitizedTag = tagInput.trim().replace(/[\s,]+/g, '');
 
 		if (sanitizedTag && !$formData.tags.includes(sanitizedTag)) {
 			$formData.tags = [...$formData.tags, sanitizedTag];
@@ -1007,15 +1007,14 @@
 				<Form.Control>
 					{#snippet children({ props })}
 						<Form.Label for="tags">Tags</Form.Label>
-						<Form.Description>Add keywords to categorize this POI.</Form.Description>
+						<Form.Description>Add one tag at a time — press Enter or click Add. Do not use commas.</Form.Description>
 						<div class="flex gap-2">
 							<Input
 								type="text"
 								bind:value={tagInput}
 								oninput={(e) => {
-									// Remove spaces as user types
 									const target = e.target as HTMLInputElement;
-									target.value = target.value.replace(/\s+/g, '');
+									target.value = target.value.replace(/[\s,]+/g, '');
 									tagInput = target.value;
 								}}
 								onkeydown={(e) => {
@@ -1023,8 +1022,7 @@
 										e.preventDefault();
 										addTag();
 									}
-									// Prevent spacebar
-									if (e.key === ' ') {
+									if (e.key === ' ' || e.key === ',') {
 										e.preventDefault();
 									}
 								}}
