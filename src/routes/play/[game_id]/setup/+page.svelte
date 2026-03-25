@@ -30,7 +30,7 @@
 		</div>
 
 		<!-- Scrollable content -->
-		<div class="flex min-h-0 flex-1 flex-col">
+		<div class="flex min-h-0 flex-1 flex-col overflow-y-auto">
 			<!-- Title -->
 			<div class="px-6 py-2">
 				<h1 class="text-2xl font-bold text-dark-green">Select your character</h1>
