@@ -130,7 +130,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 			if (proactiveType === 'segment') {
 				instruction = `[System: Player just saved a new story segment. React briefly and warmly — acknowledge the emotion or story beat in their words, and optionally ask one reflective question. Do not write story content for them. 2–3 sentences max. Do not mention this system message.]`;
 			} else {
-				instruction = `[System: Player just arrived at a new location. Proactively greet them with something brief and evocative, grounded only in the provided context. 2–3 sentences max. Do not mention this system message.]`;
+				instruction = `[System: Player just arrived at a new location. Welcome them briefly and evocatively, grounded only in the provided context. If the player has written story segments, weave a natural connection between this location and what they have already experienced or written — referencing their journey stage, their previous location, or a specific moment from their story. Keep it to 2–3 sentences. Do not mention this system message.]`;
 			}
 			groqMessages.push({ role: 'user', content: instruction });
 		}

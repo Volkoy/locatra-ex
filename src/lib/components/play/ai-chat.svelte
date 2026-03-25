@@ -1,22 +1,26 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { SvelteSet } from 'svelte/reactivity';
+	import Button from '../ui/button/button.svelte';
 
 	type Message = { role: 'user' | 'assistant'; content: string };
 
 	let {
 		sessionId,
 		nearbyPoiId,
+		focusedPoiId,
 		currentHeroStep,
 		currentCard,
 		companionName,
 		companionAvatarUrl,
+		proactivePoisSeen,
 		isOpen = $bindable(false),
 		messages = $bindable<Message[]>([]),
 		isLoading = $bindable(false)
 	}: {
 		sessionId: string;
 		nearbyPoiId: number | null;
+		focusedPoiId: number | null;
 		currentHeroStep: string | null;
 		currentCard: {
 			id: number;
@@ -26,13 +30,13 @@
 		} | null;
 		companionName: string;
 		companionAvatarUrl: string | null;
+		proactivePoisSeen: Set<string>;
 		isOpen?: boolean;
 		messages?: Message[];
 		isLoading?: boolean;
 	} = $props();
 
 	let lastProactiveMessage = $state<string | null>(null);
-	const proactivePoisSeen = new SvelteSet<number>();
 
 	// Context messages — sent to Groq but never shown in the UI.
 	// Seeded once on mount (full game context), then appended with small deltas
@@ -65,6 +69,10 @@
 
 	async function fetchResponse(proactive: boolean, proactiveType?: 'poi' | 'segment') {
 		isLoading = true;
+		// Capture at request time — used to discard stale POI reactions if the player moves on
+		const poiIdAtRequest = nearbyPoiId;
+		// For manual messages: fall back to focusedPoiId (selected/nearest) when not yet in unlock radius
+		const chatPoiId = proactive ? poiIdAtRequest : (poiIdAtRequest ?? focusedPoiId);
 		try {
 			const res = await fetch('/api/chat', {
 				method: 'POST',
@@ -73,7 +81,7 @@
 					sessionId,
 					contextMessages,
 					messages,
-					nearbyPoiId,
+					nearbyPoiId: chatPoiId,
 					currentHeroStep,
 					currentCard,
 					proactive,
@@ -81,6 +89,8 @@
 				})
 			});
 			const data = (await res.json()) as { message?: string };
+			// Discard POI proactive responses that arrived after the player changed location
+			if (proactiveType === 'poi' && nearbyPoiId !== poiIdAtRequest) return;
 			if (data.message) {
 				messages = [...messages, { role: 'assistant', content: data.message }];
 				if (!isOpen) {
@@ -109,64 +119,79 @@
 		// Append delta: only the new segment, not the full story
 		contextMessages = [
 			...contextMessages,
-			{ role: 'user', content: `[CONTEXT UPDATE] Player just wrote a new story segment: "${content}"` }
+			{
+				role: 'user',
+				content: `[CONTEXT UPDATE] Player just wrote a new story segment: "${content}"`
+			}
 		];
 		await fetchResponse(true, 'segment');
 	}
 
 	$effect(() => {
 		if (!contextInitialized) return;
-		if (nearbyPoiId !== null && !proactivePoisSeen.has(nearbyPoiId)) {
-			proactivePoisSeen.add(nearbyPoiId);
-			fetchResponse(true, 'poi');
+		if (nearbyPoiId !== null) {
+			const key = `${nearbyPoiId}-${currentHeroStep ?? 'none'}`;
+			if (!proactivePoisSeen.has(key)) {
+				proactivePoisSeen.add(key);
+				fetchResponse(true, 'poi');
+			}
 		}
 	});
 </script>
 
 <!-- Trigger button -->
-<button
+<Button
 	onclick={openChat}
-	class="relative flex size-11 items-center justify-center rounded-full bg-white text-dark-green transition-colors hover:bg-white/90 active:bg-white/80"
+	size="icon-xl"
+	variant="default"
+	class="relative rounded-full border-2 border-white shadow-lg transition-transform hover:scale-110 focus:ring-2 focus:ring-dark-green focus:ring-offset-2 focus:outline-none"
 	aria-label="Open companion chat"
 >
 	{#if companionAvatarUrl}
 		<img src={companionAvatarUrl} alt={companionName} class="size-full rounded-full object-cover" />
 	{:else}
-		<span class="text-sm font-bold">{initial}</span>
+		<span class="text-lg font-bold">{initial}</span>
 	{/if}
 	{#if lastProactiveMessage}
 		<span
 			class="absolute -top-0.5 -right-0.5 size-2.5 rounded-full border border-white bg-destructive"
 		></span>
 	{/if}
-</button>
+</Button>
 
 <!-- Speech bubble -->
 {#if lastProactiveMessage && !isOpen}
-	<div class="absolute top-14 left-2 z-30 w-64">
-		<button onclick={openChat} class="w-full text-left" aria-label="Open companion chat">
-			<div class="relative rounded-2xl border border-dark-green bg-white px-4 py-3 shadow-xl">
-				<div class="mb-2 flex items-center gap-2">
-					{#if companionAvatarUrl}
-						<img
-							src={companionAvatarUrl}
-							alt={companionName}
-							class="size-6 rounded-full object-cover"
-						/>
-					{:else}
-						<div
-							class="flex size-6 shrink-0 items-center justify-center rounded-full bg-dark-green text-xs font-bold text-white"
-						>
-							{initial}
-						</div>
-					{/if}
-					<span class="text-xs font-semibold text-dark-green">{companionName}</span>
-				</div>
-				<p class="line-clamp-3 text-sm leading-relaxed text-foreground">{lastProactiveMessage}</p>
-				<p class="mt-2 text-xs text-muted-foreground">Tap to reply…</p>
-				<div class="absolute -top-2 left-4">
-					<div class="size-4 rotate-45 border-t border-l border-dark-green bg-white"></div>
-				</div>
+	<div class="absolute top-16 left-0 z-30 w-72">
+		<button
+			onclick={openChat}
+			class="group relative w-full rounded-2xl border-2 border-dark-green bg-white p-4 text-left shadow-xl transition-transform hover:scale-105 focus:ring-2 focus:ring-dark-green focus:ring-offset-1 focus:outline-none"
+			aria-label="Open companion chat"
+		>
+			<div class="mb-3 flex items-center gap-2">
+				{#if companionAvatarUrl}
+					<img
+						src={companionAvatarUrl}
+						alt={companionName}
+						class="size-7 flex-shrink-0 rounded-full object-cover"
+					/>
+				{:else}
+					<div
+						class="flex size-7 shrink-0 items-center justify-center rounded-full bg-dark-green text-xs font-bold text-white"
+					>
+						{initial}
+					</div>
+				{/if}
+				<span class="text-sm font-bold text-dark-green">{companionName}</span>
+			</div>
+			<p class="mb-2 line-clamp-3 text-sm leading-relaxed text-foreground">
+				{lastProactiveMessage}
+			</p>
+			<p class="text-xs font-medium text-dark-green/70">Tap to reply →</p>
+			<!-- Arrow pointing up-left to button -->
+			<div class="absolute -top-3 left-6 flex size-6 items-center justify-center">
+				<div
+					class="size-0 border-t-4 border-r-4 border-l-4 border-t-dark-green border-r-transparent border-l-transparent"
+				></div>
 			</div>
 		</button>
 	</div>

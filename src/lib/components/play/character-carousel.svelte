@@ -52,7 +52,7 @@
 {:else}
 	<div class="relative">
 		<!-- Overflow clip: clips x but gives y room for shadow/border -->
-		<div class="overflow-hidden py-6">
+		<div class="overflow-hidden py-4">
 			<div bind:this={emblaNode} class="-mx-0">
 				<div class="flex gap-5 px-[calc(50%-144px)]">
 					{#each characters as character, i (character.character_id)}
@@ -72,7 +72,7 @@
 			<button
 				onclick={() => embla?.scrollPrev()}
 				disabled={currentIndex === 0}
-				class="absolute top-1/2 left-2 z-10 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-full border bg-white shadow-sm transition-opacity disabled:opacity-30 hover:bg-gray-50"
+				class="absolute top-1/2 left-2 z-10 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-full border bg-white shadow-sm transition-opacity hover:bg-gray-50 disabled:opacity-30"
 				aria-label="Previous character"
 			>
 				<ChevronLeft class="h-4 w-4" />
@@ -82,7 +82,7 @@
 			<button
 				onclick={() => embla?.scrollNext()}
 				disabled={currentIndex === characters.length - 1}
-				class="absolute top-1/2 right-2 z-10 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-full border bg-white shadow-sm transition-opacity disabled:opacity-30 hover:bg-gray-50"
+				class="absolute top-1/2 right-2 z-10 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-full border bg-white shadow-sm transition-opacity hover:bg-gray-50 disabled:opacity-30"
 				aria-label="Next character"
 			>
 				<ChevronRight class="h-4 w-4" />

@@ -18,15 +18,14 @@
 		Footprints,
 		Landmark,
 		BookDashed,
-		EllipsisVertical,
 		Flag,
 		MessageCircle,
 		PenLine,
 		LockOpen,
 		CheckCheck,
-		MousePointerClick
+		MousePointerClick,
+		LocateFixed
 	} from 'lucide-svelte';
-	import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
 	import { Separator } from '$lib/components/ui/separator';
 	import AiChat from '$lib/components/play/ai-chat.svelte';
 	import AiChatSheet from '$lib/components/play/ai-chat-sheet.svelte';
@@ -42,6 +41,8 @@
 	type Poi = {
 		id: number;
 		name: string;
+		description?: string | null;
+		image_url?: string | null;
 		longitude: number;
 		latitude: number;
 		radius?: number;
@@ -136,12 +137,6 @@
 			: -1
 	);
 	let allStepsDone = $derived(HERO_STEPS.every((step) => stepSegments[step]));
-	let currentStepTitle = $derived.by(() => {
-		if (!hasIntroduction) return 'Introduction';
-		if (reflectionSegment) return 'Story Complete';
-		if (allStepsDone) return 'Reflection';
-		return session.current_hero_step ? (HERO_STEP_LABELS[session.current_hero_step] ?? '') : '';
-	});
 
 	const HERO_STEP_GOALS: Record<string, string> = {
 		introduction: "Define the setting and your character. What's your motivation?",
@@ -161,37 +156,16 @@
 			'Still embodying your character, please reflect on the wisdom that you will carry forward into the world.'
 	};
 
-	// ── Map & GPS state (declared early — referenced by derived below) ────────
+	// ── Map & GPS state ───────────────────────────────────────────────────────
 
-	// Map bearing (controlled via svelte-maplibre's bindable prop)
-	let mapBearing = $state(0);
-
-	// GPS state
 	let userLocation = $state<{ lng: number; lat: number } | null>(null);
-	const nearbyPoiIds = new SvelteSet<number>();
-	let isGpsTracking = $state(false);
-	let lastFixTimestamp = $state<number | null>(null);
-	let lastFixAccuracy = $state<number | null>(null);
-	let heading = $state<number | null>(null);
-	let gpsWatchId = $state<number | null>(null);
-	let hasCenteredOnUser = $state(false);
-	// Stored once — map owns its position after initial mount; prevents re-centering on data updates
+	$effect(() => { console.log('[GPS] userLocation', userLocation); });
 	let mapCenter = $state<[number, number]>(
 		data.gameLocation ? [data.gameLocation.longitude, data.gameLocation.latitude] : [0, 0]
 	);
+	let geoWatchId: number | null = null;
 
-	// ── Progress & goal (depend on nearbyPoiIds) ──────────────────────────────
-	const MAX_FIX_AGE_MS = 4000;
-	const MAX_UNLOCK_ACCURACY_METERS = 50;
-
-	// 0 = intro, 1–6 = steps, 7 = reflection
-	let currentProgressIndex = $derived.by(() => {
-		if (!hasIntroduction) return 0;
-		if (allStepsDone) return 7;
-		return currentStepIndex >= 0 ? currentStepIndex + 1 : 1;
-	});
-
-	// Interaction state — persisted across refreshes via localStorage
+	// ── Interaction state — persisted across refreshes via localStorage ───────
 	const UNLOCK_KEY = `unlock_${data.session_id}`;
 	function readUnlockCache() {
 		if (typeof window === 'undefined') return null;
@@ -208,64 +182,57 @@
 	let gameLocationDistance = $derived(
 		userLocation && gameLocation ? Math.round(haversineMeters(userLocation, gameLocation)) : null
 	);
-	let gameLocationBearing = $derived(
-		userLocation && gameLocation ? getBearing(userLocation, gameLocation) : null
-	);
-	let relativeGameBearing = $derived(
-		gameLocationBearing !== null && heading !== null
-			? (gameLocationBearing - heading + 360) % 360
-			: gameLocationBearing
-	);
 	let atStartingLocation = $derived(gameLocationDistance !== null && gameLocationDistance <= 50);
 
 	let selectedCard = $state<Card | null>(_saved?.selectedCard ?? null);
 	let canDeepen = $state<boolean>(_saved?.canDeepen ?? false);
 
+	// POIs within their unlock radius (unvisited only)
+	let inRangeUnvisitedPois = $derived.by(() => {
+		if (session.play_mode !== 'gps' || !hasIntroduction || userLocation === null)
+			return [] as Poi[];
+		const loc = userLocation;
+		return (pois as Poi[]).filter(
+			(p) =>
+				!(visitedPoiIds as number[]).includes(p.id) && haversineMeters(loc, p) <= (p.radius ?? 50)
+		);
+	});
+
+	// Nearest unvisited POI overall — forces player to approach the closest one first
+	let nearestUnvisitedPoi = $derived.by(() => {
+		if (session.play_mode !== 'gps' || !hasIntroduction || userLocation === null) return null;
+		const unvisited = (pois as Poi[]).filter((p) => !(visitedPoiIds as number[]).includes(p.id));
+		if (!unvisited.length) return null;
+		const loc = userLocation;
+		return unvisited.reduce((a, b) => (haversineMeters(loc, a) <= haversineMeters(loc, b) ? a : b));
+	});
+
 	let selectedPoiDistance = $derived.by(() => {
 		if (session.play_mode !== 'gps' || selectedPoiId === null || userLocation === null) return null;
 		const poi = (pois as Poi[]).find((p) => p.id === selectedPoiId);
-		if (!poi) return null;
-		return haversineMeters(userLocation, poi);
+		return poi ? haversineMeters(userLocation, poi) : null;
 	});
 
-	let hasFreshAccurateFix = $derived.by(() => {
-		if (session.play_mode !== 'gps') return true;
-		if (!isGpsTracking || userLocation === null || lastFixTimestamp === null) return false;
-		const age = Date.now() - lastFixTimestamp;
-		if (age > MAX_FIX_AGE_MS) return false;
-		if (lastFixAccuracy !== null && lastFixAccuracy > MAX_UNLOCK_ACCURACY_METERS) return false;
-		return true;
-	});
-
-	let isSelectedPoiInRange = $derived.by(() => {
-		if (session.play_mode !== 'gps') return false;
-		if (!hasFreshAccurateFix || selectedPoiDistance === null || selectedPoiId === null)
-			return false;
-		const poi = (pois as Poi[]).find((p) => p.id === selectedPoiId);
-		if (!poi) return false;
-
-		// Conservative unlock gating: hide the unlock UI unless the entire uncertainty circle
-		// is inside the POI radius.
-		if (lastFixAccuracy === null) return false;
-		return selectedPoiDistance + lastFixAccuracy <= (poi.radius ?? 50);
-	});
-
+	// Companion reacts to the nearest in-range POI — derived independently of selectedPoiId
+	// to avoid a race where the old selectedPoiId (effect-updated) lags behind inRangeUnvisitedPois (derived)
 	const nearbyPoiId = $derived.by(() => {
-		// During introduction, the companion should not react to POI context yet.
 		if (!hasIntroduction) return null;
 		if (session.play_mode === 'remote') return selectedPoiId;
-		return isSelectedPoiInRange ? selectedPoiId : null;
+		if (!userLocation || inRangeUnvisitedPois.length === 0) return null;
+		const loc = userLocation;
+		return inRangeUnvisitedPois.reduce((a, b) =>
+			haversineMeters(loc, a) <= haversineMeters(loc, b) ? a : b
+		).id;
 	});
 
-	let canUnlock = $derived(
-		hasIntroduction &&
-			selectedPoiId !== null &&
-			!(visitedPoiIds as number[]).includes(selectedPoiId) &&
-			(session.play_mode === 'remote' ? true : isSelectedPoiInRange)
-	);
+	let canUnlock = $derived.by(() => {
+		if (!hasIntroduction || selectedPoiId === null) return false;
+		if ((visitedPoiIds as number[]).includes(selectedPoiId)) return false;
+		if (session.play_mode === 'remote') return true;
+		return inRangeUnvisitedPois.some((p) => p.id === selectedPoiId);
+	});
 
 	let selectedPoiRadius = $derived.by(() => {
-		if (selectedPoiId === null) return null;
 		const poi = (pois as Poi[]).find((p) => p.id === selectedPoiId);
 		return poi?.radius ?? 50;
 	});
@@ -276,17 +243,12 @@
 			: null
 	);
 
-	let gpsStatus = $derived.by(() => {
-		if (session.play_mode !== 'gps') return { label: null, className: '' };
-		if (!isGpsTracking) {
-			return { label: 'GPS off', className: 'bg-red-100 text-red-700' };
-		}
-		if (!hasFreshAccurateFix) {
-			return { label: 'GPS syncing', className: 'bg-yellow-100 text-yellow-800' };
-		}
-		return { label: 'GPS live', className: 'bg-green-100 text-green-700' };
+	let currentStepTitle = $derived.by(() => {
+		if (!hasIntroduction) return 'Introduction';
+		if (reflectionSegment) return 'Story Complete';
+		if (allStepsDone) return 'Reflection';
+		return session.current_hero_step ? (HERO_STEP_LABELS[session.current_hero_step] ?? '') : '';
 	});
-
 	let currentGoal = $derived.by(() => {
 		if (reflectionSegment) return { text: 'Your story is complete.', icon: CheckCheck };
 		if (allStepsDone) return { text: 'Write your reflection.', icon: MessageCircle };
@@ -297,56 +259,51 @@
 			return { text: 'Write your introduction.', icon: PenLine };
 		}
 		if (selectedCard) return { text: 'Write the next part of your story.', icon: PenLine };
-		if (canUnlock) return { text: 'Unlock the location to continue.', icon: LockOpen };
-		if (session.play_mode === 'gps' && selectedPoiId !== null)
-			return { text: 'Move closer to a POI to unlock.', icon: Navigation2 };
-		if (session.play_mode === 'gps' && nearbyPoiIds.size === 0)
-			return { text: 'Go to the next location.', icon: Navigation2 };
-		if (session.play_mode === 'remote' && !selectedPoiId)
-			return { text: 'Select a location to unlock.', icon: MousePointerClick };
+		if (session.play_mode === 'gps') {
+			if (canUnlock)
+				return { text: 'Unlock this location to continue your journey.', icon: LockOpen };
+			if (nearestUnvisitedPoi)
+				return { text: 'Move to a location to unlock it.', icon: Navigation2 };
+			return { text: 'Write the next part of your story.', icon: PenLine };
+		}
+		if (!selectedPoiId) return { text: 'Select a location to unlock.', icon: MousePointerClick };
+		if (canUnlock)
+			return { text: 'Unlock this location to continue your journey.', icon: LockOpen };
 		return { text: 'Write the next part of your story.', icon: PenLine };
 	});
 
-	let progressTrack: HTMLElement | null = null;
-	let progressNodeEls = $state<(HTMLElement | null)[]>(new Array(8).fill(null));
-
-	$effect(() => {
-		const idx = currentProgressIndex;
-		requestAnimationFrame(() => {
-			const el = progressNodeEls[idx];
-			if (!el || !progressTrack) return;
-			// Use getBoundingClientRect so position is relative to the visible track,
-			// not the offsetParent (which may differ from the scroll container)
-			const elRect = el.getBoundingClientRect();
-			const trackRect = progressTrack.getBoundingClientRect();
-			const elCenter = elRect.left - trackRect.left + progressTrack.scrollLeft + elRect.width / 2;
-			progressTrack.scrollTo({
-				left: elCenter - progressTrack.offsetWidth / 2,
-				behavior: 'smooth'
-			});
-		});
+	let currentStepIndicator = $derived.by(() => {
+		if (!hasIntroduction) {
+			return {
+				label: 'I',
+				icon: Flag,
+				className: 'bg-destructive text-white border-destructive size-5'
+			};
+		}
+		if (allStepsDone) {
+			return {
+				label: 'R',
+				icon: MessageCircle,
+				className: 'bg-dark-green text-white border-dark-green size-5'
+			};
+		}
+		return {
+			label: String(Math.max(currentStepIndex + 1, 1)),
+			icon: null,
+			className: 'bg-dark-green text-white border-dark-green size-5'
+		};
 	});
 
-	function handleGpsPosition(pos: GeolocationPosition) {
-		isGpsTracking = true;
-		lastFixTimestamp = pos.timestamp ?? Date.now();
-		lastFixAccuracy = pos.coords.accuracy ?? null;
-		updateNearby(pos);
-
-		if (!hasCenteredOnUser) {
-			mapCenter = [pos.coords.longitude, pos.coords.latitude];
-			hasCenteredOnUser = true;
+	function handleExit() {
+		if (window.confirm('Exit this game session?')) {
+			goto(`/play/${game_id}`);
 		}
 	}
 
-	function handleGpsError() {
-		isGpsTracking = false;
-		userLocation = null;
-		heading = null;
-		lastFixTimestamp = null;
-		lastFixAccuracy = null;
-		nearbyPoiIds.clear();
-	}
+	// Card flip animation
+	type CardAnimState = 'hidden' | 'entering' | 'flipping' | 'revealed';
+	let cardAnimState = $state<CardAnimState>('hidden');
+	let cardSlideIn = $state(false);
 
 	let segmentType = $state<'step' | 'deepening'>('step');
 	let isUnlocking = $state(false);
@@ -357,11 +314,6 @@
 	let stepContent = $state('');
 	let reflectionContent = $state('');
 
-	// Card flip animation
-	type CardAnimState = 'hidden' | 'entering' | 'flipping' | 'revealed';
-	let cardAnimState = $state<CardAnimState>('hidden');
-	let cardSlideIn = $state(false);
-
 	// Story sheet
 	let sheetOpen = $state(data.session.play_mode === 'remote' && !data.hasIntroduction);
 
@@ -370,6 +322,7 @@
 	let chatIsOpen = $state(false);
 	let chatMessages = $state<ChatMessage[]>([]);
 	let chatIsLoading = $state(false);
+	let proactivePoisSeen = new SvelteSet<string>(); // Tracks "{poiId}-{heroStep}" pairs already reacted to
 	let aiChatRef = $state<{
 		send: (text: string) => Promise<void>;
 		commentOnSegment: (content: string) => Promise<void>;
@@ -432,6 +385,23 @@
 		}
 	};
 
+	const getPoiMarkerTypeStyle = (type: string) => {
+		switch (type) {
+			case 'nature':
+				return 'text-nature-green bg-nature-green/10';
+			case 'history':
+				return 'text-history-yellow bg-history-yellow/10';
+			case 'sense':
+				return 'text-purple-600 bg-purple-600/10';
+			case 'action':
+				return 'text-sense-red bg-sense-red/10';
+			case 'landmark':
+				return 'text-landmark-green bg-landmark-green/10';
+			default:
+				return 'text-blue-600';
+		}
+	};
+
 	// Returns full !important override strings so Tailwind JIT includes them at build time
 	const getPoiOverrideColor = (type?: string): string => {
 		switch (type) {
@@ -463,81 +433,17 @@
 		return R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
 	}
 
-	function getBearing(
-		from: { lng: number; lat: number },
-		to: { longitude: number; latitude: number }
-	): number {
-		const lat1 = (from.lat * Math.PI) / 180;
-		const lat2 = (to.latitude * Math.PI) / 180;
-		const dLon = ((to.longitude - from.lng) * Math.PI) / 180;
-		const y = Math.sin(dLon) * Math.cos(lat2);
-		const x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLon);
-		return ((Math.atan2(y, x) * 180) / Math.PI + 360) % 360;
-	}
-
-	function updateNearby(pos: GeolocationPosition) {
-		const lng = pos.coords.longitude;
-		const lat = pos.coords.latitude;
-		userLocation = { lng, lat };
-		// Do NOT call map.easeTo here — GeolocateControl with trackUserLocation=true
-		// already handles centering on each GPS update, including respecting user panning.
-		// A second easeTo call fights the control and prevents the user from panning/zooming.
-		nearbyPoiIds.clear();
-		for (const poi of pois as Poi[]) {
-			if (!(visitedPoiIds as number[]).includes(poi.id)) {
-				const dist = haversineMeters(userLocation, poi);
-				if (dist <= (poi.radius ?? 50)) nearbyPoiIds.add(poi.id);
-			}
-		}
-	}
-
-	let hasAbsoluteOrientation = false;
-	let lastOrientationUpdate = 0;
-	const ORIENTATION_THROTTLE_MS = 500; // max 2 bearing updates per second
-	const BEARING_MIN_CHANGE_DEG = 5; // ignore jitter smaller than 5°
-
-	function handleOrientation(e: DeviceOrientationEvent) {
-		// Prefer absolute events once we get real data from them; ignore relative fallback after that
-		if (!e.absolute && hasAbsoluteOrientation) return;
-
-		let h: number | null = null;
-		const webkit = e as DeviceOrientationEvent & { webkitCompassHeading?: number };
-		if (webkit.webkitCompassHeading !== undefined) {
-			h = webkit.webkitCompassHeading;
-		} else if (e.alpha !== null) {
-			h = (360 - e.alpha) % 360;
-		}
-		if (e.absolute && h !== null) hasAbsoluteOrientation = true;
-
-		if (h !== null) {
-			heading = h; // compass needle UI — always current
-
-			const now = Date.now();
-			if (now - lastOrientationUpdate >= ORIENTATION_THROTTLE_MS) {
-				// Compute shortest angular distance to avoid 359°→1° thrash
-				let diff = h - mapBearing;
-				if (diff > 180) diff -= 360;
-				if (diff < -180) diff += 360;
-				if (Math.abs(diff) >= BEARING_MIN_CHANGE_DEG) {
-					lastOrientationUpdate = now;
-					mapBearing = h;
-				}
-			}
-		}
-	}
-
-	// Auto-select nearby POI (GPS mode)
+	// Auto-select POI (GPS mode): prefer nearest in-range, fall back to nearest overall for navigation
 	$effect(() => {
-		if (session.play_mode !== 'gps' || cardAnimState !== 'hidden') return;
-		const nearbyUnvisited = (pois as Poi[]).filter(
-			(p) => nearbyPoiIds.has(p.id) && !(visitedPoiIds as number[]).includes(p.id)
-		);
-		const location = userLocation;
-		if (!nearbyUnvisited.length || !location) return;
-		const closest = nearbyUnvisited.reduce((a, b) =>
-			haversineMeters(location, a) <= haversineMeters(location, b) ? a : b
-		);
-		if (selectedPoiId !== closest.id) selectedPoiId = closest.id;
+		if (session.play_mode !== 'gps' || !hasIntroduction || selectedCard !== null) return;
+		if (inRangeUnvisitedPois.length > 0 && userLocation) {
+			const loc = userLocation;
+			selectedPoiId = inRangeUnvisitedPois.reduce((a, b) =>
+				haversineMeters(loc, a) <= haversineMeters(loc, b) ? a : b
+			).id;
+		} else {
+			selectedPoiId = nearestUnvisitedPoi?.id ?? null;
+		}
 	});
 
 	// Persist unlock state across refreshes
@@ -550,53 +456,25 @@
 	});
 
 	onMount(() => {
-		if (session.play_mode === 'gps') {
-			if (typeof navigator !== 'undefined' && navigator.geolocation) {
-				gpsWatchId = navigator.geolocation.watchPosition(handleGpsPosition, handleGpsError, {
-					enableHighAccuracy: true,
-					maximumAge: 0,
-					timeout: 15000
-				});
-			}
-
-			// Compass / heading — drives the compass needle UI (heading state only).
-			// Register both absolute (Android/real device) and relative (Chrome DevTools simulation).
-			type IOSDeviceOrientationEvent = typeof DeviceOrientationEvent & {
-				requestPermission?: () => Promise<string>;
-			};
-			if (
-				typeof (DeviceOrientationEvent as IOSDeviceOrientationEvent).requestPermission ===
-				'function'
-			) {
-				// iOS 13+
-				(DeviceOrientationEvent as IOSDeviceOrientationEvent).requestPermission!()
-					.then((state: string) => {
-						if (state === 'granted') {
-							window.addEventListener(
-								'deviceorientation',
-								handleOrientation as EventListener,
-								true
-							);
-						}
-					})
-					.catch(() => {});
-			} else {
-				window.addEventListener(
-					'deviceorientationabsolute',
-					handleOrientation as EventListener,
-					true
-				);
-				window.addEventListener('deviceorientation', handleOrientation as EventListener, true);
-			}
+		if (session.play_mode === 'gps' && navigator.geolocation) {
+			geoWatchId = navigator.geolocation.watchPosition(
+				(pos) => {
+					userLocation = { lng: pos.coords.longitude, lat: pos.coords.latitude };
+				},
+				() => {
+					userLocation = null;
+				},
+				{ enableHighAccuracy: true, maximumAge: 0 }
+			);
 		}
 
-		// Keyboard height compensation — lifts scroll container above the software keyboard
+		// Keyboard height compensation
 		if (window.visualViewport) {
 			const vv = window.visualViewport;
-			const onViewportResize = () => {
+			const onResize = () => {
 				keyboardPadding = Math.max(32, window.innerHeight - vv.height + 16);
 			};
-			vv.addEventListener('resize', onViewportResize);
+			vv.addEventListener('resize', onResize);
 		}
 
 		requestAnimationFrame(() => {
@@ -607,18 +485,7 @@
 	});
 
 	onDestroy(() => {
-		if (typeof window === 'undefined') return;
-		if (gpsWatchId !== null && typeof navigator !== 'undefined' && navigator.geolocation) {
-			navigator.geolocation.clearWatch(gpsWatchId);
-			gpsWatchId = null;
-		}
-		window.removeEventListener(
-			'deviceorientationabsolute',
-			handleOrientation as EventListener,
-			true
-		);
-		window.removeEventListener('deviceorientation', handleOrientation as EventListener, true);
-		window.visualViewport?.removeEventListener('resize', () => {});
+		if (geoWatchId !== null) navigator.geolocation.clearWatch(geoWatchId);
 	});
 
 	// ── Derived locations ────────────────────────────────────────────────────
@@ -626,35 +493,7 @@
 	let selectedPoi = $derived((pois as Poi[]).find((p) => p.id === selectedPoiId) ?? null);
 	const nearestPoiOverrideColor = $derived(getPoiOverrideColor(selectedPoi?.type));
 
-	let nearestUnvisited = $derived.by((): Poi | null => {
-		const unvisited = (pois as Poi[]).filter((p) => !(visitedPoiIds as number[]).includes(p.id));
-		if (!unvisited.length) return null;
-		if (userLocation && session.play_mode === 'gps') {
-			return unvisited.reduce((best, p) =>
-				haversineMeters(userLocation!, p) < haversineMeters(userLocation!, best) ? p : best
-			);
-		}
-		return unvisited[0];
-	});
-
-	let nearestDistance = $derived(
-		nearestUnvisited && userLocation && session.play_mode === 'gps'
-			? Math.round(haversineMeters(userLocation, nearestUnvisited))
-			: null
-	);
-
-	let poiBearing = $derived(
-		userLocation && nearestUnvisited ? getBearing(userLocation, nearestUnvisited) : null
-	);
-
-	// Bearing relative to device heading → compass needle points to POI
-	let relativeBearing = $derived(
-		poiBearing !== null && heading !== null ? (poiBearing - heading + 360) % 360 : poiBearing
-	);
-
-	// ── Card animation ───────────────────────────────────────────────────────
-
-	async function triggerCardAnimation(card: Card, canDeepenVal: boolean) {
+	async function beginWritingFromUnlock(card: Card, canDeepenVal: boolean) {
 		selectedCard = card;
 		canDeepen = canDeepenVal;
 		stepContent = '';
@@ -665,21 +504,15 @@
 		requestAnimationFrame(() => {
 			requestAnimationFrame(() => {
 				cardSlideIn = true;
-				setTimeout(() => {
-					cardAnimState = 'flipping';
-				}, 500);
-				setTimeout(() => {
-					cardAnimState = 'revealed';
-				}, 1100);
+				setTimeout(() => { cardAnimState = 'flipping'; }, 500);
+				setTimeout(() => { cardAnimState = 'revealed'; }, 1100);
 			});
 		});
 	}
 
 	function openSheetForWriting() {
 		cardSlideIn = false;
-		setTimeout(() => {
-			cardAnimState = 'hidden';
-		}, 300);
+		setTimeout(() => { cardAnimState = 'hidden'; }, 300);
 		sheetOpen = true;
 		tick().then(() => {
 			if (session.current_hero_step) scrollToSection(session.current_hero_step);
@@ -690,6 +523,7 @@
 
 	function handlePoiClick(poiId: number) {
 		if ((visitedPoiIds as number[]).includes(poiId) || !hasIntroduction) return;
+		if (session.play_mode === 'gps') return;
 		selectedPoiId = poiId;
 	}
 
@@ -706,7 +540,7 @@
 				if (result.type === 'success') {
 					const d = result.data as { card?: Card; canDeepen?: boolean } | null;
 					if (d?.card) {
-						await triggerCardAnimation(d.card, d.canDeepen ?? false);
+						await beginWritingFromUnlock(d.card, d.canDeepen ?? false);
 					} else {
 						await update();
 					}
@@ -728,7 +562,6 @@
 		attributionControl={false}
 		bind:center={mapCenter}
 		zoom={gameLocation ? 14 : 10}
-		bind:bearing={mapBearing}
 	>
 		{#if gameLocation}
 			<Marker lngLat={[gameLocation.longitude, gameLocation.latitude]}>
@@ -764,7 +597,7 @@
 					>
 						<PoiIcon class="size-6" strokeWidth={2} />
 					</button>
-					{#if nearbyPoiIds.has(poi.id) || isSelected}
+					{#if inRangeUnvisitedPois.some((p) => p.id === poi.id) || isSelected}
 						<span
 							class="rounded-full px-2 py-0.5 text-xs font-semibold whitespace-nowrap text-white shadow-md {poiColor}"
 						>
@@ -775,36 +608,30 @@
 			</Marker>
 		{/each}
 
-		{#if userLocation}
+		{#if session.play_mode === 'gps' && userLocation}
 			<Marker lngLat={[userLocation.lng, userLocation.lat]}>
 				<div class="relative flex items-center justify-center">
-					<span class="absolute inline-flex size-8 animate-ping rounded-full bg-blue-500/40"></span>
-					<div class="relative h-4 w-4 rounded-full border-2 border-white bg-blue-500 shadow"></div>
+					<span
+						class="absolute inline-flex size-14 animate-ping rounded-full bg-blue-400 opacity-20"
+					></span>
+
+					<div class="relative size-3 rounded-full bg-blue-500 shadow-lg ring-2 ring-white"></div>
 				</div>
 			</Marker>
 		{/if}
 	</MapLibre>
 
-	<!-- ── Gradient vignettes ──────────────────────────────────────────── -->
-	<div
-		class="pointer-events-none absolute inset-x-0 top-0 z-[5] h-40 bg-gradient-to-b from-dark-green/60 to-transparent"
-	></div>
-	<div
-		class="pointer-events-none absolute inset-x-0 bottom-0 z-[5] h-56 bg-gradient-to-t from-dark-green/60 to-transparent"
-	></div>
-
-	<!-- ── Top bar ────────────────────────────────────────────────────── -->
-	<div
-		class="absolute top-0 right-0 left-0 z-10 mx-auto max-w-3xl rounded-b-3xl bg-dark-green p-2 text-white"
-	>
-		<div class="relative flex items-center justify-center">
-			<!-- Companion chat button (top-left) -->
-			<div class="absolute top-0 left-0 mt-2">
+	<!-- ── Top controls ──────────────────────────────────────────────── -->
+	<div class="absolute top-0 right-0 left-0 z-10 mx-auto justify-between p-3">
+		<div class="relative flex items-start">
+			<!-- Chat trigger + geolocate — far left -->
+			<div class="z-20 flex shrink-0 flex-col items-center gap-8">
 				{#if companion}
 					<AiChat
 						bind:this={aiChatRef}
 						sessionId={session_id}
 						{nearbyPoiId}
+						focusedPoiId={selectedPoiId}
 						currentHeroStep={session.current_hero_step ?? null}
 						currentCard={selectedCard}
 						companionName={companion.name}
@@ -812,166 +639,94 @@
 						bind:isOpen={chatIsOpen}
 						bind:messages={chatMessages}
 						bind:isLoading={chatIsLoading}
+						{proactivePoisSeen}
 					/>
+				{/if}
+				{#if session.play_mode === 'gps'}
+					<Button
+						size="icon-lg"
+						variant="outline"
+						onclick={() => {
+							if (userLocation) mapCenter = [userLocation.lng, userLocation.lat];
+						}}
+						class=""
+						aria-label="Center on my location"
+					>
+						<LocateFixed class="size-5" />
+					</Button>
 				{/if}
 			</div>
 
-			<!-- Options menu -->
-			<div class="absolute top-0 right-0 mt-2">
-				<DropdownMenu.Root>
-					<DropdownMenu.Trigger>
-						{#snippet child({ props })}
-							<button
-								{...props}
-								class="flex size-8 items-center justify-center rounded-full text-white hover:bg-white/20"
-								aria-label="Options"
-							>
-								<EllipsisVertical class="size-5" />
-							</button>
-						{/snippet}
-					</DropdownMenu.Trigger>
-					<DropdownMenu.Content align="end">
-						<DropdownMenu.Item variant="destructive" onclick={() => goto(`/play/${game_id}`)}>
-							<LogOut class="size-4" />
-							Exit game
-						</DropdownMenu.Item>
-					</DropdownMenu.Content>
-				</DropdownMenu.Root>
-			</div>
-
-			<!-- Scrollable progress track (centred, fades at edges) -->
-			<div
-				class="mt-2 flex h-16 w-16 shrink-0 snap-x snap-mandatory items-center overflow-x-auto rounded-full bg-white"
-				style="scrollbar-width:none;"
-				bind:this={progressTrack}
+			<!-- Exit button — far right -->
+			<Button
+				size="icon-lg"
+				variant="destructive"
+				onclick={handleExit}
+				class="ml-auto shrink-0"
+				aria-label="Exit game"
 			>
-				<div class="flex items-center" style="padding-inline: calc(50% - 20px);">
-					<!-- Intro node -->
-					<div
-						bind:this={progressNodeEls[0]}
-						class="flex h-10 w-10 shrink-0 snap-center items-center justify-center rounded-full border-2 border-destructive
-							bg-destructive transition-all"
-					>
-						<Flag class="h-4 w-4 text-white" />
-					</div>
-
-					{#each HERO_STEPS as step, i (step)}
-						<!-- Connecting line -->
-						<div
-							class="h-1 w-8 shrink-0 transition-colors
-								{i === 0
-								? hasIntroduction
-									? 'bg-dark-green'
-									: 'bg-gray-300'
-								: stepSegments[HERO_STEPS[i - 1]]
-									? 'bg-dark-green'
-									: 'bg-gray-300'}"
-						></div>
-						<!-- Step circle -->
-						<div
-							bind:this={progressNodeEls[i + 1]}
-							class="flex h-10 w-10 shrink-0 snap-center items-center justify-center rounded-full border-2 text-sm font-bold transition-all
-								{stepSegments[step]
-								? 'border-dark-green bg-dark-green text-white'
-								: i === currentStepIndex
-									? 'border-dark-green bg-dark-green text-white'
-									: 'border-gray-300 bg-white text-gray-400'}"
-						>
-							{i + 1}
-						</div>
-					{/each}
-
-					<!-- Line before reflection -->
-					<div
-						class="h-1 w-8 shrink-0 transition-colors {allStepsDone
-							? 'bg-dark-green'
-							: 'bg-gray-300'}"
-					></div>
-
-					<!-- Reflection node -->
-					<div
-						bind:this={progressNodeEls[7]}
-						class="flex h-10 w-10 shrink-0 snap-center items-center justify-center rounded-full border-2 transition-all
-							{reflectionSegment
-							? 'border-dark-green bg-dark-green'
-							: allStepsDone
-								? 'border-dark-green bg-dark-green'
-								: 'border-gray-300 bg-white'}"
-					>
-						<MessageCircle
-							class="h-4 w-4
-								{reflectionSegment ? 'text-white' : allStepsDone ? 'text-white' : 'text-gray-400'}"
-						/>
-					</div>
-				</div>
-			</div>
+				<LogOut class="size-5" />
+			</Button>
 		</div>
+	</div>
 
-		<!-- Step title + goal -->
-		<div class="my-2 flex flex-col items-center gap-2 text-center">
-			{#if gpsStatus.label}
-				<div
-					class="flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold {gpsStatus.className}"
-				>
-					<span class="h-2 w-2 rounded-full bg-current opacity-80"></span>
-					<span>{gpsStatus.label}</span>
-				</div>
-			{/if}
-			<p class="text-lg font-bold text-white">{currentStepTitle}</p>
+	<!-- ── Step indicator — below top bar, centered ─────────────────── -->
+	<div class="absolute top-0 left-1/2 z-10 m-3 -translate-x-1/2">
+		<div
+			class="flex items-center gap-2 rounded-full border-2 border-dark-green bg-primary-foreground p-3 pr-6 shadow-lg"
+		>
 			<div
-				class="flex items-center gap-1.5 rounded-full bg-white px-3 py-1 text-sm font-medium text-dark-green"
+				class="flex h-12 w-12 shrink-0 items-center justify-center rounded-full border-2 border-dark-green font-bold {currentStepIndicator.className}"
 			>
-				<currentGoal.icon class="h-3.5 w-3.5 shrink-0" />
-				<span>{currentGoal.text}</span>
+				{#if currentStepIndicator.icon}
+					<currentStepIndicator.icon class="h-5 w-5" />
+				{:else}
+					{currentStepIndicator.label}
+				{/if}
+			</div>
+			<div class="flex flex-col items-start justify-items-start gap-1">
+				<p class="text-lg leading-tight font-black text-dark-green">{currentStepTitle}</p>
+				<div class="flex items-center gap-1 text-sm text-black">
+					<currentGoal.icon class="h-4 w-4 shrink-0" />
+					<span class="max-w-48 truncate font-medium">{currentGoal.text}</span>
+				</div>
 			</div>
 		</div>
 	</div>
 
 	<!-- ── Card flip overlay ──────────────────────────────────────────── -->
 	{#if cardAnimState !== 'hidden'}
-		<!-- Backdrop -->
 		<div
 			class="absolute inset-0 z-30 flex items-center justify-center bg-black/50 transition-opacity duration-300
 				{cardSlideIn ? 'opacity-100' : 'opacity-0'}"
 		>
-			<div class="absolute inset-0"></div>
-			<!-- Card -->
 			<div class="card-flip-container relative z-10">
 				<div
-					class="card-flipper transition-[transform] duration-500
+					class="card-flipper [transition-property:transform,opacity,translate] duration-500
 						{cardAnimState === 'flipping' || cardAnimState === 'revealed' ? 'is-flipped' : ''}
-						[transition-property:transform,opacity,translate] duration-500
 						{cardSlideIn ? 'translate-y-0 opacity-100' : 'translate-y-full opacity-0'}"
 				>
 					{#if selectedCard}
 						{@const CardIcon = getCardIcon(selectedCard.type)}
 						{@const headerBg = getCardHeaderBg(selectedCard.type)}
-
-						<!-- Back face: type color + icon -->
+						<!-- Back face -->
 						<div class="card-face flex flex-col items-center justify-center {headerBg}">
-							<div
-								class="flex h-20 w-20 items-center justify-center rounded-full border-4 border-white/20"
-							>
+							<div class="flex h-20 w-20 items-center justify-center rounded-full border-4 border-white/20">
 								<CardIcon class="h-10 w-10 text-white" />
 							</div>
 							<div class="mt-5 h-1 w-12 rounded-full bg-white/25"></div>
 							<div class="mt-2 h-1 w-7 rounded-full bg-white/25"></div>
 						</div>
-
-						<!-- Front face: matches authoring tool layout -->
-						<div
-							class="card-face card-front flex flex-col overflow-hidden rounded-xl border-8 border-white shadow-2xl outline-2 outline-gray-200"
-						>
-							<!-- Colored header with icon + title -->
+						<!-- Front face -->
+						<div class="card-face card-front flex flex-col overflow-hidden rounded-xl border-8 border-white shadow-2xl outline-2 outline-gray-200">
 							<div class="flex flex-col items-center gap-2 p-4 {headerBg}">
 								<div class="flex h-14 w-14 items-center justify-center rounded-full bg-white/20">
 									<CardIcon class="h-8 w-8 text-white" />
 								</div>
-								<h3 class="line-clamp-3 text-center text-sm leading-tight font-bold text-white">
+								<h3 class="line-clamp-3 text-center text-sm font-bold leading-tight text-white">
 									{selectedCard.title}
 								</h3>
 							</div>
-							<!-- White body with prompt + button -->
 							<div class="flex flex-1 flex-col justify-between bg-white p-4 pt-6">
 								{#if selectedCard.prompt}
 									<p class="line-clamp-[7] text-center text-sm leading-relaxed text-black">
@@ -1006,110 +761,66 @@
 					Start your journey
 				</Button>
 			{:else}
-				<!-- Not yet at starting location — show compass + distance -->
-				<div
-					class="flex aspect-square flex-col items-center justify-center rounded-xl border-2 border-dark-green bg-white p-2"
-				>
-					{#if relativeGameBearing !== null}
-						<div class="flex size-12 items-center justify-center">
-							<Navigation2
-								strokeWidth={2}
-								class="size-8 text-dark-green transition-transform duration-200"
-								style="transform: rotate({relativeGameBearing}deg)"
-							/>
-						</div>
-					{/if}
-					{#if gameLocationDistance !== null}
-						<p class="text-sm font-bold text-dark-green">
-							{gameLocationDistance}m away
-						</p>
-					{/if}
-				</div>
-			{/if}
-		</div>
-	{/if}
-
-	<!-- ── GPS bottom bar (compass + distance + unlock) ──────────────── -->
-	{#if session.play_mode === 'gps' && hasIntroduction && !allStepsDone && selectedCard === null}
-		<div
-			class="absolute right-0 left-0 z-20 flex flex-col items-center gap-2 transition-[bottom] duration-300"
-			style="bottom: {sheetBottomStyle}"
-		>
-			{#if selectedPoiId !== null && selectedPoiDistanceMeters !== null && selectedPoiRadius !== null}
-				<div
-					class="rounded-full border border-dark-green/20 bg-white/95 px-3 py-1 text-xs font-semibold text-dark-green shadow"
-				>
-					{selectedPoi?.name ?? 'Selected location'}: {selectedPoiDistanceMeters}m / {selectedPoiRadius}m
-				</div>
-			{/if}
-
-			<!-- Navigation icon + distance -->
-			{#if relativeBearing !== null || nearestDistance !== null}
-				<div
-					class="flex aspect-square flex-col items-center justify-center rounded-xl border-2 border-dark-green bg-white p-2"
-				>
-					{#if relativeBearing !== null}
-						<div class="flex size-12 items-center justify-center">
-							<Navigation2
-								strokeWidth={2}
-								class="size-8 text-dark-green transition-transform duration-200"
-								style="transform: rotate({relativeBearing}deg)"
-							/>
-						</div>
-					{/if}
-					{#if nearestDistance !== null}
-						<p class="text-sm font-bold text-dark-green">{nearestDistance}m away</p>
-					{/if}
-				</div>
-			{/if}
-
-			<!-- Unlock button (only when in range) -->
-			{#if canUnlock}
-				<form
-					method="POST"
-					action="?/unlockPoi"
-					class="flex w-full justify-center"
-					use:enhance={makeUnlockEnhance()}
-				>
-					<input type="hidden" name="poi_id" value={selectedPoiId} />
-					<Button
-						size="lg"
-						type="submit"
-						class="w-full max-w-xs rounded-full font-bold !text-white {nearestPoiOverrideColor}"
-						disabled={isUnlocking}
+				<!-- Not yet at starting location — show distance -->
+				{#if gameLocationDistance !== null}
+					<div
+						class="flex items-center justify-center rounded-xl border-2 border-dark-green bg-white px-4 py-3"
 					>
-						{isUnlocking ? 'Unlocking…' : `Unlock ${selectedPoi?.name ?? 'location'}`}
-					</Button>
-				</form>
+						<p class="text-sm font-bold text-dark-green">
+							{gameLocationDistance}m to starting location
+						</p>
+					</div>
+				{/if}
 			{/if}
 		</div>
 	{/if}
 
-	<!-- ── Remote mode: unlock bar ────────────────────────────────────── -->
-	{#if session.play_mode === 'remote' && canUnlock && selectedCard === null}
+	<!-- ── Floating proximity card (GPS + remote) ────────────────────── -->
+	{#if hasIntroduction && !allStepsDone && selectedCard === null && selectedPoi}
 		<div
-			class="absolute right-0 left-0 z-20 max-w-lg px-4 py-2 transition-[bottom] duration-300
-				{canUnlock ? 'mx-auto' : 'mx-4'}"
+			class="absolute right-0 left-0 z-20 mx-auto w-full max-w-md px-4 transition-[bottom] duration-300"
 			style="bottom: {sheetBottomStyle}"
 		>
-			<form
-				method="POST"
-				action="?/unlockPoi"
-				class="flex w-full justify-center"
-				use:enhance={makeUnlockEnhance()}
-			>
-				<input type="hidden" name="poi_id" value={selectedPoiId} />
-				<Button
-					size="lg"
-					type="submit"
-					class="w-full max-w-xs rounded-full font-bold !text-white {nearestPoiOverrideColor}"
-					disabled={isUnlocking}
-				>
-					{isUnlocking ? 'Unlocking…' : `Unlock ${selectedPoi?.name ?? 'location'}`}
-				</Button>
-			</form>
+			<div class="overflow-hidden rounded-2xl border border-dark-green bg-white shadow-xl">
+				<div class="aspect-video w-full">
+					{#if selectedPoi.image_url}
+						<img src={selectedPoi.image_url} alt={selectedPoi.name} class="h-full w-full object-cover" />
+					{:else}
+						<div class="flex h-full w-full items-center justify-center bg-muted text-muted-foreground">
+							<MapPin class="size-5" />
+						</div>
+					{/if}
+				</div>
+				<div class="space-y-2 p-3">
+					<div class="flex items-center gap-2">
+						{#if selectedPoi.type}
+							<span class="rounded-full px-2 py-0.5 text-xs font-medium uppercase {getPoiMarkerTypeStyle(selectedPoi.type)}">{selectedPoi.type}</span>
+						{/if}
+						<p class="line-clamp-1 text-sm font-bold text-dark-green">{selectedPoi.name}</p>
+					</div>
+					{#if session.play_mode === 'gps' && selectedPoiDistanceMeters !== null && selectedPoiRadius !== null}
+						<p class="text-xs text-dark-green/70">{selectedPoiDistanceMeters}m away · {selectedPoiRadius}m unlock radius</p>
+					{/if}
+					{#if canUnlock}
+						<form method="POST" action="?/unlockPoi" use:enhance={makeUnlockEnhance()}>
+							<input type="hidden" name="poi_id" value={selectedPoiId} />
+							<Button
+								type="submit"
+								size="sm"
+								class="w-full font-bold !text-white {nearestPoiOverrideColor}"
+								disabled={isUnlocking}
+							>
+								{isUnlocking ? 'Unlocking…' : `Unlock ${selectedPoi.name}`}
+							</Button>
+						</form>
+					{:else}
+						<p class="text-xs text-dark-green/70">Move closer to unlock this location.</p>
+					{/if}
+				</div>
+			</div>
 		</div>
 	{/if}
+
 
 	<!-- ── AI Companion sheet (rendered at root to escape top bar stacking context) ── -->
 	{#if companion}
@@ -1119,6 +830,7 @@
 			isLoading={chatIsLoading}
 			companionName={companion.name}
 			companionAvatarUrl={companion.avatar_url}
+			playerAvatarUrl={session.characters?.image_url ?? null}
 			onSend={(text) => aiChatRef?.send(text)}
 		/>
 	{/if}
@@ -1264,45 +976,45 @@
 							</div>
 							<!-- Content -->
 							<div class="min-w-0 flex-1 space-y-3">
-								<!-- Card prompt (done: look up from cards; writing: use selectedCard) -->
-								{#if doneSegment?.card_id}
-									{@const doneCard = (cards as Card[]).find((c) => c.id === doneSegment!.card_id)}
-									{#if doneCard}
-										{@const CardIcon = getCardIcon(doneCard.type)}
-										{@const headerBg = getCardHeaderBg(doneCard.type)}
-										<div class="flex items-start gap-3 rounded-xl border border-gray-300 p-3">
-											<div
-												class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full {headerBg}"
-											>
-												<CardIcon class="h-4 w-4 text-white" />
-											</div>
-											<div class="min-w-0">
-												<p class="text-sm font-semibold text-foreground">{doneCard.title}</p>
-												{#if doneCard.prompt}
-													<p class="mt-1 text-sm leading-relaxed text-muted-foreground">
-														{doneCard.prompt}
-													</p>
+								<!-- Location + Card prompt -->
+								{#if doneSegment?.card_id || (isWriting && selectedCard)}
+									{@const card = doneSegment?.card_id ? ((cards as Card[]).find((c) => c.id === doneSegment!.card_id) ?? null) : selectedCard}
+									{@const poi = doneSegment?.poi_id ? ((pois as Poi[]).find((p) => p.id === doneSegment!.poi_id) ?? null) : selectedPoi}
+									<div class="flex flex-col gap-2">
+										{#if poi}
+											{@const PoiIcon = getPoiIcon(poi.type ?? '')}
+											{@const poiTypeStyle = getPoiMarkerTypeStyle(poi.type ?? '')}
+											<div class="flex items-center gap-2 rounded-xl border border-gray-200 p-2">
+												{#if poi.image_url}
+													<img src={poi.image_url} alt={poi.name} class="h-12 w-20 shrink-0 rounded-lg object-cover" />
+												{:else}
+													<div class="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-muted">
+														<PoiIcon class="h-5 w-5 text-muted-foreground" />
+													</div>
 												{/if}
+												<div class="min-w-0">
+													{#if poi.type}
+														<span class="rounded-full px-2 py-0.5 text-xs font-medium uppercase {poiTypeStyle}">{poi.type}</span>
+													{/if}
+													<p class="truncate text-sm font-semibold text-dark-green">{poi.name}</p>
+												</div>
 											</div>
-										</div>
-									{/if}
-								{:else if isWriting && selectedCard}
-									{@const CardIcon = getCardIcon(selectedCard.type)}
-									{@const headerBg = getCardHeaderBg(selectedCard.type)}
-									<div class="flex items-start gap-3 rounded-xl border border-gray-300 p-3">
-										<div
-											class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full {headerBg}"
-										>
-											<CardIcon class="h-4 w-4 text-white" />
-										</div>
-										<div class="min-w-0">
-											<p class="text-sm font-semibold text-foreground">{selectedCard.title}</p>
-											{#if selectedCard.prompt}
-												<p class="mt-1 text-sm leading-relaxed text-muted-foreground">
-													{selectedCard.prompt}
-												</p>
-											{/if}
-										</div>
+										{/if}
+										{#if card}
+											{@const CardIcon = getCardIcon(card.type)}
+											{@const headerBg = getCardHeaderBg(card.type)}
+											<div class="flex items-start gap-3 rounded-xl border border-gray-300 p-3">
+												<div class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full {headerBg}">
+													<CardIcon class="h-4 w-4 text-white" />
+												</div>
+												<div class="min-w-0">
+													<p class="text-sm font-semibold text-foreground">{card.title}</p>
+													{#if card.prompt}
+														<p class="mt-1 text-sm leading-relaxed text-muted-foreground">{card.prompt}</p>
+													{/if}
+												</div>
+											</div>
+										{/if}
 									</div>
 								{/if}
 
@@ -1346,7 +1058,6 @@
 													stepContent = '';
 													segmentType = 'step';
 													sheetOpen = !!d?.completed;
-													nearbyPoiIds.clear();
 													await update({ reset: false });
 													await tick();
 													if (d?.completed) scrollToSection('reflection');
@@ -1490,10 +1201,5 @@
 	}
 	.card-front {
 		transform: rotateY(180deg);
-	}
-
-	/* Hide built-in GeolocateControl button — replaced by custom positioned button */
-	:global(.maplibregl-ctrl-geolocate) {
-		display: none !important;
 	}
 </style>

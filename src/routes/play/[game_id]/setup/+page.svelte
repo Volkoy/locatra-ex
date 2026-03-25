@@ -4,6 +4,7 @@
 	import { Input } from '$lib/components/ui/input';
 	import { ArrowLeft } from 'lucide-svelte';
 	import CharacterCarousel from '$lib/components/play/character-carousel.svelte';
+	import Textarea from '$lib/components/ui/textarea/textarea.svelte';
 
 	let { data, form: formResult } = $props();
 	let { game, characters, playMode } = $derived(data);
@@ -29,9 +30,9 @@
 		</div>
 
 		<!-- Scrollable content -->
-		<div class="flex min-h-0 flex-1 flex-col overflow-y-auto">
+		<div class="flex min-h-0 flex-1 flex-col">
 			<!-- Title -->
-			<div class="px-6 pt-6 pb-2">
+			<div class="px-6 py-2">
 				<h1 class="text-2xl font-bold text-dark-green">Select your character</h1>
 				<p class="mt-1 text-sm text-muted-foreground">Choose who you'll become in this story</p>
 			</div>
@@ -55,9 +56,9 @@
 				<input type="hidden" name="play_mode" value={playMode} />
 				<input type="hidden" name="character_id" value={selectedCharacter?.character_id ?? ''} />
 
-				<div class="space-y-4">
+				<div class="space-y-2">
 					<!-- Name -->
-					<div class="space-y-1.5">
+					<div class="space-y-4">
 						<label for="character_name" class="text-sm font-medium">Your name</label>
 						<Input
 							id="character_name"
@@ -69,19 +70,19 @@
 					</div>
 
 					<!-- Description -->
-					<div class="space-y-1.5">
+					<div class="space-y-4">
 						<label for="character_description" class="text-sm font-medium"
 							>Your backstory <span class="font-normal text-muted-foreground">(optional)</span
 							></label
 						>
-						<textarea
+						<Textarea
 							id="character_description"
 							name="character_description"
 							placeholder="A few words about who you are in this story…"
 							bind:value={characterDescription}
 							rows={3}
 							class="w-full resize-none rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:border-dark-green focus:ring-2 focus:ring-dark-green/30 focus:outline-none"
-						></textarea>
+						></Textarea>
 					</div>
 				</div>
 

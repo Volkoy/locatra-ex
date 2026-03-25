@@ -10,6 +10,7 @@
 		isLoading,
 		companionName,
 		companionAvatarUrl,
+		playerAvatarUrl,
 		onSend
 	}: {
 		isOpen: boolean;
@@ -17,6 +18,7 @@
 		isLoading: boolean;
 		companionName: string;
 		companionAvatarUrl: string | null;
+		playerAvatarUrl: string | null;
 		onSend: (text: string) => void;
 	} = $props();
 
@@ -25,10 +27,17 @@
 
 	const initial = companionName.charAt(0).toUpperCase();
 
-	export async function scrollToBottom() {
+	async function scrollToBottom() {
 		await tick();
 		if (messagesEl) messagesEl.scrollTop = messagesEl.scrollHeight;
 	}
+
+	$effect(() => {
+		void messages.length;
+		void isLoading;
+		void isOpen;
+		scrollToBottom();
+	});
 
 	function send() {
 		const text = input.trim();
@@ -76,7 +85,7 @@
 		</div>
 
 		<!-- Messages -->
-		<div bind:this={messagesEl} class="flex flex-1 flex-col gap-3 overflow-y-auto p-4">
+		<div bind:this={messagesEl} class="flex flex-1 flex-col gap-3 overflow-y-auto px-6 py-4">
 			{#if messages.length === 0 && !isLoading}
 				<div class="flex flex-1 flex-col items-center justify-center gap-3 py-16 text-center">
 					{#if companionAvatarUrl}
@@ -91,18 +100,29 @@
 			{#each messages as msg (msg)}
 				{#if msg.role === 'assistant'}
 					<div class="flex items-end gap-2">
-						<div class="flex size-7 shrink-0 items-center justify-center rounded-full bg-dark-green text-xs font-bold text-white">{initial}</div>
+						{#if companionAvatarUrl}
+							<img src={companionAvatarUrl} alt={companionName} class="size-7 shrink-0 rounded-full object-cover" />
+						{:else}
+							<div class="flex size-7 shrink-0 items-center justify-center rounded-full bg-dark-green text-xs font-bold text-white">{initial}</div>
+						{/if}
 						<div class="max-w-[80%] rounded-2xl rounded-bl-sm border border-dark-green/20 bg-muted/40 px-4 py-2.5 text-sm leading-relaxed">{msg.content}</div>
 					</div>
 				{:else}
-					<div class="flex justify-end">
+					<div class="flex items-end justify-end gap-2">
 						<div class="max-w-[80%] rounded-2xl rounded-br-sm bg-dark-green px-4 py-2.5 text-sm leading-relaxed text-white">{msg.content}</div>
+						{#if playerAvatarUrl}
+							<img src={playerAvatarUrl} alt="You" class="size-7 shrink-0 rounded-full object-cover" />
+						{/if}
 					</div>
 				{/if}
 			{/each}
 			{#if isLoading}
 				<div class="flex items-end gap-2">
-					<div class="flex size-7 shrink-0 items-center justify-center rounded-full bg-dark-green text-xs font-bold text-white">{initial}</div>
+					{#if companionAvatarUrl}
+						<img src={companionAvatarUrl} alt={companionName} class="size-7 shrink-0 rounded-full object-cover" />
+					{:else}
+						<div class="flex size-7 shrink-0 items-center justify-center rounded-full bg-dark-green text-xs font-bold text-white">{initial}</div>
+					{/if}
 					<div class="rounded-2xl rounded-bl-sm border border-dark-green/20 bg-muted/40 px-4 py-3">
 						<span class="flex gap-1">
 							<span class="size-2 animate-bounce rounded-full bg-dark-green/50" style="animation-delay:0ms"></span>
