@@ -161,7 +161,7 @@
 
 <!-- Speech bubble -->
 {#if lastProactiveMessage && !isOpen}
-	<div class="absolute top-16 left-0 z-30 w-72">
+	<div class="absolute top-16 left-0 z-30 w-72 pl-1">
 		<button
 			onclick={openChat}
 			class="group relative w-full rounded-2xl border-2 border-dark-green bg-white p-4 text-left shadow-xl transition-transform hover:scale-105 focus:ring-2 focus:ring-dark-green focus:ring-offset-1 focus:outline-none"
@@ -188,10 +188,10 @@
 			</p>
 			<p class="text-xs font-medium text-dark-green/70">Tap to reply →</p>
 			<!-- Arrow pointing up-left to button -->
-			<div class="absolute -top-3 left-6 flex size-6 items-center justify-center">
-				<div
-					class="size-0 border-t-4 border-r-4 border-l-4 border-t-dark-green border-r-transparent border-l-transparent"
-				></div>
+			<!-- Arrow: outer dark-green triangle + inner white triangle for bordered look -->
+			<div class="absolute -top-[9px] left-4 h-[9px] w-3">
+				<div class="absolute top-0 left-[6px] size-0 border-b-[9px] border-r-[6px] border-l-[6px] border-b-dark-green border-r-transparent border-l-transparent"></div>
+				<div class="absolute top-[2px] left-[6px] size-0 border-b-[7px] border-r-[5px] border-l-[5px] border-b-white border-r-transparent border-l-transparent"></div>
 			</div>
 		</button>
 	</div>
