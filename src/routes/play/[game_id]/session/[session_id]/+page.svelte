@@ -159,9 +159,7 @@
 	// ── Map & GPS state ───────────────────────────────────────────────────────
 
 	let userLocation = $state<{ lng: number; lat: number } | null>(null);
-	$effect(() => {
-		console.log('[GPS] userLocation', userLocation);
-	});
+	let gpsWaiting = $state(false); // true while waiting for first GPS fix
 	let mapCenter = $state<[number, number]>(
 		data.gameLocation ? [data.gameLocation.longitude, data.gameLocation.latitude] : [0, 0]
 	);
@@ -469,14 +467,17 @@
 
 	onMount(() => {
 		if (session.play_mode === 'gps' && navigator.geolocation) {
-			// EMA smoothing factor: 0 = no update, 1 = raw GPS. 0.2 gives smooth movement.
 			const ALPHA = 0.2;
-			// Discard readings worse than this accuracy (metres)
-			const MAX_ACCURACY = 80;
+			const MAX_ACCURACY = 150;
+			// First fix: accept up to 300m so the marker appears immediately
+			const FIRST_FIX_ACCURACY = 500;
 
+			gpsWaiting = true;
 			geoWatchId = navigator.geolocation.watchPosition(
 				(pos) => {
-					if (pos.coords.accuracy > MAX_ACCURACY) return;
+					const isFirst = userLocation === null;
+					if (isFirst && pos.coords.accuracy > FIRST_FIX_ACCURACY) return;
+					if (!isFirst && pos.coords.accuracy > MAX_ACCURACY) return;
 					const next = { lng: pos.coords.longitude, lat: pos.coords.latitude };
 					userLocation = userLocation
 						? {
@@ -484,9 +485,11 @@
 								lat: ALPHA * next.lat + (1 - ALPHA) * userLocation.lat
 							}
 						: next;
+					gpsWaiting = false;
 				},
 				() => {
 					userLocation = null;
+					gpsWaiting = false;
 				},
 				{ enableHighAccuracy: true, maximumAge: 3000 }
 			);
@@ -679,9 +682,14 @@
 						onclick={() => {
 							if (userLocation) mapCenter = [userLocation.lng, userLocation.lat];
 						}}
-						aria-label="Center on my location"
+						disabled={gpsWaiting}
+						aria-label={gpsWaiting ? 'Waiting for GPS…' : 'Center on my location'}
 					>
-						<LocateFixed class="size-5" />
+						{#if gpsWaiting}
+							<span class="size-5 animate-spin rounded-full border-2 border-dark-green border-t-transparent"></span>
+						{:else}
+							<LocateFixed class="size-5" />
+						{/if}
 					</Button>
 				{/if}
 			</div>
