@@ -131,6 +131,14 @@
 			])
 		)
 	);
+	let deepeningSegments = $derived(
+		Object.fromEntries(
+			HERO_STEPS.map((step) => [
+				step,
+				(segments as Segment[]).filter((s) => s.hero_step === step && s.segment_type === 'deepening')
+			])
+		)
+	);
 	let currentStepIndex = $derived(
 		session.current_hero_step
 			? HERO_STEPS.indexOf(session.current_hero_step as (typeof HERO_STEPS)[number])
@@ -1152,6 +1160,61 @@
 								{#if doneSegment}
 									<Textarea value={doneSegment.content} disabled class="min-h-[160px]" />
 								{:else if isWriting}
+									{@const priorDeepenings = deepeningSegments[step]}
+									{#each priorDeepenings as seg}
+										{@const segCard = (cards as Card[]).find((c) => c.id === seg.card_id) ?? null}
+										{@const segPoi = (pois as Poi[]).find((p) => p.id === seg.poi_id) ?? null}
+										<div class="flex flex-col gap-2">
+											{#if segPoi}
+												{@const PoiIcon = getPoiIcon(segPoi.type ?? '')}
+												{@const poiTypeStyle = getPoiMarkerTypeStyle(segPoi.type ?? '')}
+												<div class="flex items-center gap-2 rounded-xl border border-gray-200 p-2">
+													{#if segPoi.image_url}
+														<img
+															src={segPoi.image_url}
+															alt={segPoi.name}
+															class="h-12 w-20 shrink-0 rounded-lg object-cover"
+														/>
+													{:else}
+														<div
+															class="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-muted"
+														>
+															<PoiIcon class="h-5 w-5 text-muted-foreground" />
+														</div>
+													{/if}
+													<div class="min-w-0">
+														{#if segPoi.type}
+															<span
+																class="rounded-full px-2 py-0.5 text-xs font-medium uppercase {poiTypeStyle}"
+																>{segPoi.type}</span
+															>
+														{/if}
+														<p class="truncate text-sm font-semibold text-dark-green">{segPoi.name}</p>
+													</div>
+												</div>
+											{/if}
+											{#if segCard}
+												{@const CardIcon = getCardIcon(segCard.type)}
+												{@const headerBg = getCardHeaderBg(segCard.type)}
+												<div class="flex items-start gap-3 rounded-xl border border-gray-300 p-3">
+													<div
+														class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full {headerBg}"
+													>
+														<CardIcon class="h-4 w-4 text-white" />
+													</div>
+													<div class="min-w-0">
+														<p class="text-sm font-semibold text-foreground">{segCard.title}</p>
+														{#if segCard.prompt}
+															<p class="mt-1 text-sm leading-relaxed text-muted-foreground">
+																{segCard.prompt}
+															</p>
+														{/if}
+													</div>
+												</div>
+											{/if}
+										</div>
+										<Textarea value={seg.content} disabled class="min-h-[120px]" />
+									{/each}
 									{#if canDeepen}
 										<div class="flex gap-2">
 											<Button

@@ -74,20 +74,30 @@
 		// For manual messages: fall back to focusedPoiId (selected/nearest) when not yet in unlock radius
 		const chatPoiId = proactive ? poiIdAtRequest : (poiIdAtRequest ?? focusedPoiId);
 		try {
-			const res = await fetch('/api/chat', {
+			const body = JSON.stringify({
+				sessionId,
+				contextMessages,
+				messages,
+				nearbyPoiId: chatPoiId,
+				currentHeroStep,
+				currentCard,
+				proactive,
+				proactiveType
+			});
+			let res = await fetch('/api/chat', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({
-					sessionId,
-					contextMessages,
-					messages,
-					nearbyPoiId: chatPoiId,
-					currentHeroStep,
-					currentCard,
-					proactive,
-					proactiveType
-				})
+				body
 			});
+			if (res.status === 429) {
+				const { retryAfter } = (await res.json()) as { retryAfter?: number };
+				await new Promise((r) => setTimeout(r, (retryAfter ?? 15) * 1000));
+				res = await fetch('/api/chat', {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body
+				});
+			}
 			const data = (await res.json()) as { message?: string };
 			// Discard POI proactive responses that arrived after the player changed location
 			if (proactiveType === 'poi' && nearbyPoiId !== poiIdAtRequest) return;

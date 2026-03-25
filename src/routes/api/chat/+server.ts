@@ -144,7 +144,12 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 
 		const message = completion.choices[0]?.message?.content ?? '';
 		return json({ message });
-	} catch (err) {
+	} catch (err: unknown) {
+		const apiErr = err as { status?: number; headers?: Headers };
+		if (apiErr?.status === 429) {
+			const retryAfter = Number(apiErr.headers?.get?.('retry-after') ?? 15);
+			return json({ error: 'rate_limited', retryAfter }, { status: 429 });
+		}
 		console.error('Chat error:', err);
 		return json({ error: 'Failed to get response' }, { status: 500 });
 	}
