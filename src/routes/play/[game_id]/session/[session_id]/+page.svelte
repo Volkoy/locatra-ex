@@ -457,14 +457,26 @@
 
 	onMount(() => {
 		if (session.play_mode === 'gps' && navigator.geolocation) {
+			// EMA smoothing factor: 0 = no update, 1 = raw GPS. 0.2 gives smooth movement.
+			const ALPHA = 0.2;
+			// Discard readings worse than this accuracy (metres)
+			const MAX_ACCURACY = 80;
+
 			geoWatchId = navigator.geolocation.watchPosition(
 				(pos) => {
-					userLocation = { lng: pos.coords.longitude, lat: pos.coords.latitude };
+					if (pos.coords.accuracy > MAX_ACCURACY) return;
+					const next = { lng: pos.coords.longitude, lat: pos.coords.latitude };
+					userLocation = userLocation
+						? {
+								lng: ALPHA * next.lng + (1 - ALPHA) * userLocation.lng,
+								lat: ALPHA * next.lat + (1 - ALPHA) * userLocation.lat
+							}
+						: next;
 				},
 				() => {
 					userLocation = null;
 				},
-				{ enableHighAccuracy: true, maximumAge: 0 }
+				{ enableHighAccuracy: true, maximumAge: 3000 }
 			);
 		}
 
