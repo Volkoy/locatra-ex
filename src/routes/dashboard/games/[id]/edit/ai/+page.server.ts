@@ -14,8 +14,8 @@ export const load: PageServerLoad = async ({ parent }) => {
         tone: aiConfig.tone as AICompanionFormData['tone'],
         personality: aiConfig.personality as AICompanionFormData['personality'],
         relationship: aiConfig.relationship as AICompanionFormData['relationship'],
-        humor_level: aiConfig.humor_level || 0,
-        formality: aiConfig.formality || 1,
+        humor_level: aiConfig.humor_level ?? 0,
+        formality: aiConfig.formality ?? 2,
         additional_context: aiConfig.additional_context || ''
     } : {
         name: 'Sage',
@@ -23,7 +23,7 @@ export const load: PageServerLoad = async ({ parent }) => {
         personality: 'mentor' as const,
         relationship: 'guide' as const,
         humor_level: 0,
-        formality: 1
+        formality: 2
     };
 
     const form = await superValidate(formData, zod4(aiCompanionSchema));
