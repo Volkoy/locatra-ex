@@ -136,9 +136,12 @@ export const POST: RequestHandler = async ({ request, locals }) => {
 		}
 
 		const completion = await groq.chat.completions.create({
-			model: 'llama-3.1-8b-instant',
+			model: 'openai/gpt-oss-20b',
 			messages: groqMessages,
-			max_tokens: 200,
+			// Reasoning tokens count toward the limit, so leave headroom beyond the ~200-token answer
+			max_completion_tokens: 1024,
+			reasoning_effort: 'low',
+			include_reasoning: false,
 			temperature: 0.75
 		});
 

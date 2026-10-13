@@ -150,12 +150,15 @@ When existing cards are provided, study their style, tone, and vocabulary to ens
 Always respond with ONLY a valid JSON object — no markdown, no explanation, no extra text.`;
 
 		const completion = await groq.chat.completions.create({
-			model: 'llama-3.3-70b-versatile',
+			model: 'openai/gpt-oss-120b',
 			messages: [
 				{ role: 'system', content: systemPrompt },
 				{ role: 'user', content: userPrompt }
 			],
-			max_tokens: 200,
+			// Reasoning tokens count toward the limit, so leave headroom beyond the ~200-token answer
+			max_completion_tokens: 1024,
+			reasoning_effort: 'low',
+			include_reasoning: false,
 			temperature: 0.8,
 			response_format: { type: 'json_object' }
 		});
