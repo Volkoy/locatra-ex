@@ -51,9 +51,9 @@
 			</div>
 			<div class="flex items-center gap-6">
 				<div class="hidden items-center gap-2 md:flex">
-					<Button variant="ghost" href="/play">Play Games</Button>
+					<Button variant="ghost" href="/play">Browse Games</Button>
 					{#if isAuthenticated}
-						<Button variant="ghost" href="/dashboard/games/new">Create Games</Button>
+						<Button variant="ghost" href="/dashboard">Dashboard</Button>
 					{/if}
 				</div>
 				{#if isAuthenticated}
