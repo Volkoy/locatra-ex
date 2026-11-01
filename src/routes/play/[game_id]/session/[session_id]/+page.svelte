@@ -4,7 +4,8 @@
 	import { enhance } from '$app/forms';
 	import type { ActionResult } from '@sveltejs/kit';
 	import { goto } from '$app/navigation';
-	import { MapLibre, Marker } from 'svelte-maplibre';
+	import { MapLibre, Marker, GeolocateControl } from 'svelte-maplibre';
+	import type { GeolocateControl as MapGeolocateControl } from 'maplibre-gl';
 	import { Button } from '$lib/components/ui/button';
 	import { Textarea } from '$lib/components/ui/textarea';
 	import {
@@ -170,11 +171,13 @@
 	let userLocation = $state<{ lng: number; lat: number } | null>(null);
 	let gpsWaiting = $state(false); // true while waiting for first GPS fix
 	let gpsError = $state<'denied' | 'unsupported' | null>(null);
-	let gpsAccuracy = $state<number | null>(null); // estimated accuracy of userLocation, in metres
+	let gpsAccuracy = $state<number | null>(null); // accuracy of userLocation, in metres
 	let lastFixAt = $state<number | null>(null);
-	// Last rejected reading or transient error. Phones often stop reporting while the player stands
-	// still, so silence alone isn't treated as signal loss.
+	// Last transient GPS error. Phones often stop reporting while the player stands still,
+	// so silence alone isn't treated as signal loss.
 	let lastGpsProblemAt = $state<number | null>(null);
+	// MapLibre's control owns watchPosition and draws the dot + accuracy circle; we read its events
+	let geolocateControl = $state<MapGeolocateControl>();
 	let now = $state(Date.now());
 	let gpsTicker: ReturnType<typeof setInterval> | null = null;
 	const GPS_WEAK_ACCURACY = 50;
@@ -198,7 +201,6 @@
 	let mapCenter = $state<[number, number]>(
 		data.gameLocation ? [data.gameLocation.longitude, data.gameLocation.latitude] : [0, 0]
 	);
-	let geoWatchId: number | null = null;
 
 	// ── Interaction state — persisted across refreshes via localStorage ───────
 	const UNLOCK_KEY = `unlock_${data.session_id}`;
@@ -500,66 +502,59 @@
 		}
 	});
 
+	// Feed the game's position from MapLibre's GeolocateControl and start tracking once it's ready
+	$effect(() => {
+		const control = geolocateControl;
+		if (!control) return;
+
+		const onGeolocate = (e: unknown) => {
+			const pos = e as GeolocationPosition;
+			gpsWaiting = false;
+			userLocation = { lng: pos.coords.longitude, lat: pos.coords.latitude };
+			gpsAccuracy = pos.coords.accuracy;
+			lastFixAt = Date.now();
+		};
+		const onError = (e: unknown) => {
+			const err = e as GeolocationPositionError;
+			gpsWaiting = false;
+			lastGpsProblemAt = Date.now();
+			// Transient errors keep the last known position; only a permission denial ends GPS play
+			if (err.code === 1) {
+				gpsError = 'denied';
+				userLocation = null;
+			}
+		};
+		control.on('geolocate', onGeolocate);
+		control.on('error', onError);
+
+		// The control sets itself up asynchronously after being added; trigger() returns false until then
+		let tries = 0;
+		const startTimer = setInterval(() => {
+			if (control.trigger() || ++tries > 50) clearInterval(startTimer);
+		}, 100);
+
+		return () => {
+			clearInterval(startTimer);
+			control.off('geolocate', onGeolocate);
+			control.off('error', onError);
+		};
+	});
+
+	function recenterOnUser() {
+		const control = geolocateControl;
+		if (!control) return;
+		// trigger() resumes following from BACKGROUND (map was panned) or restarts from OFF;
+		// in the other states it would turn tracking off, so just recentre instead
+		if (control._watchState === 'BACKGROUND' || control._watchState === 'OFF') control.trigger();
+		else if (userLocation) mapCenter = [userLocation.lng, userLocation.lat];
+	}
+
 	onMount(() => {
 		if (session.play_mode === 'gps') {
 			if (!navigator.geolocation) {
 				gpsError = 'unsupported';
 			} else {
-				const ALPHA = 0.2;
-				// Readings worse than this are ignored, unless the current estimate is even worse
-				const MAX_ACCURACY = 150;
-
 				gpsWaiting = true;
-				geoWatchId = navigator.geolocation.watchPosition(
-					(pos) => {
-						gpsWaiting = false; // browser is responding — stop spinner
-						const next = { lng: pos.coords.longitude, lat: pos.coords.latitude };
-						const accuracy = pos.coords.accuracy;
-
-						// First fix is always shown, whatever its accuracy (desktop uses IP/WiFi)
-						if (userLocation === null || gpsAccuracy === null) {
-							userLocation = next;
-							gpsAccuracy = accuracy;
-							lastFixAt = Date.now();
-							return;
-						}
-						if (accuracy > MAX_ACCURACY && accuracy >= gpsAccuracy) {
-							lastGpsProblemAt = Date.now();
-							return;
-						}
-
-						const jump = haversineMeters(userLocation, {
-							longitude: next.lng,
-							latitude: next.lat
-						});
-						// Snap instead of smoothing when the reading is much more precise than the current
-						// estimate (GPS replacing a coarse WiFi/cell fix) or the player has clearly moved
-						if (accuracy < gpsAccuracy / 2 || jump > Math.max(50, 2 * accuracy)) {
-							userLocation = next;
-							gpsAccuracy = accuracy;
-						} else {
-							userLocation = {
-								lng: ALPHA * next.lng + (1 - ALPHA) * userLocation.lng,
-								lat: ALPHA * next.lat + (1 - ALPHA) * userLocation.lat
-							};
-							gpsAccuracy = ALPHA * accuracy + (1 - ALPHA) * gpsAccuracy;
-						}
-						lastFixAt = Date.now();
-					},
-					(err) => {
-						gpsWaiting = false;
-						lastGpsProblemAt = Date.now();
-						// Transient errors (signal loss, timeout) keep the last known position;
-						// only a permission denial ends GPS play
-						if (err.code === err.PERMISSION_DENIED) {
-							gpsError = 'denied';
-							userLocation = null;
-							if (geoWatchId !== null) navigator.geolocation.clearWatch(geoWatchId);
-							geoWatchId = null;
-						}
-					},
-					{ enableHighAccuracy: true, maximumAge: 3000 }
-				);
 				gpsTicker = setInterval(() => (now = Date.now()), 5000);
 			}
 		}
@@ -581,7 +576,6 @@
 	});
 
 	onDestroy(() => {
-		if (geoWatchId !== null) navigator.geolocation.clearWatch(geoWatchId);
 		if (gpsTicker !== null) clearInterval(gpsTicker);
 	});
 
@@ -711,16 +705,13 @@
 			</Marker>
 		{/each}
 
-		{#if session.play_mode === 'gps' && userLocation}
-			<Marker lngLat={[userLocation.lng, userLocation.lat]}>
-				<div class="relative flex items-center justify-center">
-					<span
-						class="absolute inline-flex size-14 animate-ping rounded-full bg-blue-400 opacity-20"
-					></span>
-
-					<div class="relative size-3 rounded-full bg-blue-500 shadow-lg ring-2 ring-white"></div>
-				</div>
-			</Marker>
+		{#if session.play_mode === 'gps' && !gpsError}
+			<GeolocateControl
+				bind:control={geolocateControl}
+				trackUserLocation
+				positionOptions={{ enableHighAccuracy: true, maximumAge: 3000 }}
+				fitBoundsOptions={{ maxZoom: 17 }}
+			/>
 		{/if}
 	</MapLibre>
 
@@ -749,9 +740,7 @@
 					<Button
 						size="icon-lg"
 						variant="outline"
-						onclick={() => {
-							if (userLocation) mapCenter = [userLocation.lng, userLocation.lat];
-						}}
+						onclick={recenterOnUser}
 						disabled={gpsWaiting}
 						aria-label={gpsWaiting ? 'Waiting for GPS…' : 'Center on my location'}
 					>
@@ -1462,6 +1451,10 @@
 </div>
 
 <style>
+	/* MapLibre's geolocate button is replaced by our own recentre button in the top controls */
+	:global(.maplibregl-ctrl-group:has(.maplibregl-ctrl-geolocate)) {
+		display: none;
+	}
 	.card-flip-container {
 		perspective: 1200px;
 		width: min(288px, 80vw);
