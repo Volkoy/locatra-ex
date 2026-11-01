@@ -24,7 +24,8 @@
 		LockOpen,
 		CheckCheck,
 		MousePointerClick,
-		LocateFixed
+		LocateFixed,
+		TriangleAlert
 	} from 'lucide-svelte';
 	import { Separator } from '$lib/components/ui/separator';
 	import AiChat from '$lib/components/play/ai-chat.svelte';
@@ -168,6 +169,32 @@
 
 	let userLocation = $state<{ lng: number; lat: number } | null>(null);
 	let gpsWaiting = $state(false); // true while waiting for first GPS fix
+	let gpsError = $state<'denied' | 'unsupported' | null>(null);
+	let gpsAccuracy = $state<number | null>(null); // estimated accuracy of userLocation, in metres
+	let lastFixAt = $state<number | null>(null);
+	// Last rejected reading or transient error. Phones often stop reporting while the player stands
+	// still, so silence alone isn't treated as signal loss.
+	let lastGpsProblemAt = $state<number | null>(null);
+	let now = $state(Date.now());
+	let gpsTicker: ReturnType<typeof setInterval> | null = null;
+	const GPS_WEAK_ACCURACY = 50;
+	const GPS_STALE_MS = 30_000;
+
+	let gpsWarning = $derived.by(() => {
+		if (session.play_mode !== 'gps' || gpsError || gpsWaiting) return null;
+		if (userLocation === null)
+			return "Can't find your location yet. Check that location is on and try moving outdoors.";
+		if (
+			lastFixAt !== null &&
+			lastGpsProblemAt !== null &&
+			lastGpsProblemAt > lastFixAt &&
+			now - lastFixAt > GPS_STALE_MS
+		)
+			return 'GPS signal lost. Your position on the map may be out of date.';
+		if (gpsAccuracy !== null && gpsAccuracy > GPS_WEAK_ACCURACY)
+			return `Weak GPS signal (±${Math.round(gpsAccuracy)}m). Your position may be inaccurate.`;
+		return null;
+	});
 	let mapCenter = $state<[number, number]>(
 		data.gameLocation ? [data.gameLocation.longitude, data.gameLocation.latitude] : [0, 0]
 	);
@@ -474,33 +501,67 @@
 	});
 
 	onMount(() => {
-		if (session.play_mode === 'gps' && navigator.geolocation) {
-			const ALPHA = 0.2;
-			const MAX_ACCURACY = 150;
-			// First fix: accept up to 300m so the marker appears immediately
-			const FIRST_FIX_ACCURACY = 500;
+		if (session.play_mode === 'gps') {
+			if (!navigator.geolocation) {
+				gpsError = 'unsupported';
+			} else {
+				const ALPHA = 0.2;
+				// Readings worse than this are ignored, unless the current estimate is even worse
+				const MAX_ACCURACY = 150;
 
-			gpsWaiting = true;
-			geoWatchId = navigator.geolocation.watchPosition(
-				(pos) => {
-					gpsWaiting = false; // browser is responding — stop spinner
-					const isFirst = userLocation === null;
-					// Always accept the first fix (desktop uses IP/WiFi with high accuracy numbers)
-					if (!isFirst && pos.coords.accuracy > MAX_ACCURACY) return;
-					const next = { lng: pos.coords.longitude, lat: pos.coords.latitude };
-					userLocation = userLocation
-						? {
+				gpsWaiting = true;
+				geoWatchId = navigator.geolocation.watchPosition(
+					(pos) => {
+						gpsWaiting = false; // browser is responding — stop spinner
+						const next = { lng: pos.coords.longitude, lat: pos.coords.latitude };
+						const accuracy = pos.coords.accuracy;
+
+						// First fix is always shown, whatever its accuracy (desktop uses IP/WiFi)
+						if (userLocation === null || gpsAccuracy === null) {
+							userLocation = next;
+							gpsAccuracy = accuracy;
+							lastFixAt = Date.now();
+							return;
+						}
+						if (accuracy > MAX_ACCURACY && accuracy >= gpsAccuracy) {
+							lastGpsProblemAt = Date.now();
+							return;
+						}
+
+						const jump = haversineMeters(userLocation, {
+							longitude: next.lng,
+							latitude: next.lat
+						});
+						// Snap instead of smoothing when the reading is much more precise than the current
+						// estimate (GPS replacing a coarse WiFi/cell fix) or the player has clearly moved
+						if (accuracy < gpsAccuracy / 2 || jump > Math.max(50, 2 * accuracy)) {
+							userLocation = next;
+							gpsAccuracy = accuracy;
+						} else {
+							userLocation = {
 								lng: ALPHA * next.lng + (1 - ALPHA) * userLocation.lng,
 								lat: ALPHA * next.lat + (1 - ALPHA) * userLocation.lat
-							}
-						: next;
-				},
-				() => {
-					userLocation = null;
-					gpsWaiting = false;
-				},
-				{ enableHighAccuracy: true, maximumAge: 3000 }
-			);
+							};
+							gpsAccuracy = ALPHA * accuracy + (1 - ALPHA) * gpsAccuracy;
+						}
+						lastFixAt = Date.now();
+					},
+					(err) => {
+						gpsWaiting = false;
+						lastGpsProblemAt = Date.now();
+						// Transient errors (signal loss, timeout) keep the last known position;
+						// only a permission denial ends GPS play
+						if (err.code === err.PERMISSION_DENIED) {
+							gpsError = 'denied';
+							userLocation = null;
+							if (geoWatchId !== null) navigator.geolocation.clearWatch(geoWatchId);
+							geoWatchId = null;
+						}
+					},
+					{ enableHighAccuracy: true, maximumAge: 3000 }
+				);
+				gpsTicker = setInterval(() => (now = Date.now()), 5000);
+			}
 		}
 
 		// Keyboard height compensation
@@ -521,6 +582,7 @@
 
 	onDestroy(() => {
 		if (geoWatchId !== null) navigator.geolocation.clearWatch(geoWatchId);
+		if (gpsTicker !== null) clearInterval(gpsTicker);
 	});
 
 	// ── Derived locations ────────────────────────────────────────────────────
@@ -703,7 +765,7 @@
 			</div>
 
 			<!-- Step indicator — center, constrained to available space -->
-			<div class="flex min-w-0 flex-1 justify-center">
+			<div class="flex min-w-0 flex-1 flex-col items-center gap-2">
 				<div
 					class="flex min-w-0 items-center gap-2 rounded-full border-2 border-dark-green bg-white p-2 pr-5 shadow-lg"
 				>
@@ -726,6 +788,15 @@
 						</div>
 					</div>
 				</div>
+				{#if gpsWarning}
+					<div
+						class="flex max-w-xs items-start gap-2 rounded-xl border-2 border-yellow-500 bg-yellow-50 px-3 py-2 text-xs font-medium text-yellow-900 shadow-lg"
+						role="status"
+					>
+						<TriangleAlert class="mt-0.5 size-4 shrink-0" />
+						<span>{gpsWarning}</span>
+					</div>
+				{/if}
 			</div>
 
 			<!-- Exit button — far right -->
@@ -740,6 +811,28 @@
 			</Button>
 		</div>
 	</div>
+
+	<!-- ── Location unavailable (GPS mode cannot continue) ────────────── -->
+	{#if gpsError}
+		<div class="absolute inset-0 z-40 flex items-center justify-center bg-black/50 p-4">
+			<div
+				class="flex w-full max-w-sm flex-col items-center gap-3 rounded-2xl border-2 border-dark-green bg-white p-6 text-center shadow-2xl"
+				role="alertdialog"
+				aria-labelledby="gps-error-title"
+			>
+				<TriangleAlert class="size-10 text-destructive" />
+				<h2 id="gps-error-title" class="text-lg font-black text-dark-green">
+					Location unavailable
+				</h2>
+				<p class="text-sm text-black">
+					{gpsError === 'denied'
+						? 'Location access was denied, so this game cannot be played in GPS mode. Allow location access in your browser settings and try again, or go back and choose remote mode.'
+						: 'Your browser does not support location, so this game cannot be played in GPS mode. Go back and choose remote mode instead.'}
+				</p>
+				<Button class="w-full" onclick={() => goto(`/play/${game_id}`)}>Back to game page</Button>
+			</div>
+		</div>
+	{/if}
 
 	<!-- ── Card flip overlay ──────────────────────────────────────────── -->
 	{#if cardAnimState !== 'hidden'}

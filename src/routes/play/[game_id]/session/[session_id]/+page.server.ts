@@ -62,6 +62,21 @@ function selectCard(
 	return pool[Math.floor(Math.random() * pool.length)] ?? null;
 }
 
+// A visit may deepen the current step only if enough unvisited POIs remain to reach every later step
+function computeCanDeepen(
+	totalPois: number,
+	visitedCount: number,
+	currentHeroStep: string | null,
+): boolean {
+	const currentStepIdx = currentHeroStep
+		? HERO_STEP_ORDER.indexOf(currentHeroStep as HeroStep)
+		: -1;
+	if (currentStepIdx < 0) return false;
+	const remaining = totalPois - visitedCount - 1; // after this visit
+	const remainingSteps = 5 - currentStepIdx;
+	return remaining > remainingSteps;
+}
+
 export const load: PageServerLoad = async ({ params, locals }) => {
 	const { supabase } = locals;
 	const session = await locals.getSession();
@@ -178,6 +193,16 @@ export const actions: Actions = {
 			.single();
 
 		if (!gameSession) return fail(403, { message: "Session not found" });
+		if (!gameSession.current_hero_step) {
+			return fail(400, { message: "No journey step in progress" });
+		}
+
+		const { data: pois } = await supabase.rpc("get_game_pois_for_player", {
+			game_id_param: gameSession.game_id,
+		});
+		if (!(pois ?? []).some((p) => p.id === poi_id)) {
+			return fail(400, { message: "POI not part of this game" });
+		}
 
 		// Check not already visited
 		const { data: existingSegment } = await supabase
@@ -192,10 +217,10 @@ export const actions: Actions = {
 		}
 
 		// GPS proximity check
-		if (
-			gameSession.play_mode === "gps" && !isNaN(user_lng) &&
-			!isNaN(user_lat)
-		) {
+		if (gameSession.play_mode === "gps") {
+			if (isNaN(user_lng) || isNaN(user_lat)) {
+				return fail(400, { message: "Location is required" });
+			}
 			const { data: poi } = await supabase
 				.from("pois")
 				.select("radius")
@@ -234,10 +259,6 @@ export const actions: Actions = {
 				.single()
 			: { data: null };
 
-		const { data: pois } = await supabase.rpc("get_game_pois_for_player", {
-			game_id_param: gameSession.game_id,
-		});
-
 		const usedCardIds = (segments ?? [])
 			.filter((s) => s.card_id !== null)
 			.map((s) => s.card_id as number);
@@ -250,15 +271,11 @@ export const actions: Actions = {
 			usedCardIds,
 		);
 
-		// Compute canDeepen
-		const visitedCount = (segments ?? []).filter((s) => s.poi_id).length;
-		const totalPois = (pois ?? []).length;
-		const remaining = totalPois - visitedCount - 1; // after this visit
-		const currentStepIdx = gameSession.current_hero_step
-			? HERO_STEP_ORDER.indexOf(gameSession.current_hero_step as HeroStep)
-			: -1;
-		const remainingSteps = currentStepIdx === -1 ? 6 : 5 - currentStepIdx;
-		const canDeepen = remaining > remainingSteps && currentStepIdx >= 0;
+		const canDeepen = computeCanDeepen(
+			(pois ?? []).length,
+			(segments ?? []).filter((s) => s.poi_id).length,
+			gameSession.current_hero_step,
+		);
 
 		return { card, canDeepen, poi_id };
 	},
@@ -278,6 +295,9 @@ export const actions: Actions = {
 
 		if (!content) return fail(400, { message: "Content is required" });
 		if (!poi_id) return fail(400, { message: "POI is required" });
+		if (segment_type !== "step" && segment_type !== "deepening") {
+			return fail(400, { message: "Invalid segment type" });
+		}
 
 		const { data: gameSession } = await supabase
 			.from("game_sessions")
@@ -287,11 +307,51 @@ export const actions: Actions = {
 			.single();
 
 		if (!gameSession) return fail(403, { message: "Session not found" });
+		if (!gameSession.current_hero_step) {
+			return fail(400, { message: "No journey step in progress" });
+		}
 
-		const { data: existingSegments } = await supabase
-			.from("story_segments")
-			.select("id")
-			.eq("session_id", gameSession.id);
+		const [{ data: existingSegments }, { data: pois }, { data: card }] =
+			await Promise.all([
+				supabase
+					.from("story_segments")
+					.select("id, poi_id")
+					.eq("session_id", gameSession.id),
+				supabase.rpc("get_game_pois_for_player", {
+					game_id_param: gameSession.game_id,
+				}),
+				card_id
+					? supabase
+						.from("cards")
+						.select("id")
+						.eq("id", card_id)
+						.eq("game_id", gameSession.game_id)
+						.maybeSingle()
+					: Promise.resolve({ data: null }),
+			]);
+
+		if (!(pois ?? []).some((p) => p.id === poi_id)) {
+			return fail(400, { message: "POI not part of this game" });
+		}
+		const visitedPoiIds = (existingSegments ?? [])
+			.filter((s) => s.poi_id)
+			.map((s) => s.poi_id);
+		if (visitedPoiIds.includes(poi_id)) {
+			return fail(400, { message: "POI already visited" });
+		}
+		if (card_id && !card) {
+			return fail(400, { message: "Card not part of this game" });
+		}
+		if (
+			segment_type === "deepening" &&
+			!computeCanDeepen(
+				(pois ?? []).length,
+				visitedPoiIds.length,
+				gameSession.current_hero_step,
+			)
+		) {
+			return fail(400, { message: "Cannot deepen this step" });
+		}
 
 		const segmentOrder = (existingSegments ?? []).length;
 		const heroStep = gameSession.current_hero_step;

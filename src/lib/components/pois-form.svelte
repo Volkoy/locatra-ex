@@ -62,6 +62,8 @@
 	let pois = $derived(data.pois || []);
 	let isFormOpen = $state(false);
 	let editingPOI = $state<POI | null>(null);
+	// Unique storage key for new POIs so their images don't overwrite each other
+	let newUploadId = $state(crypto.randomUUID());
 	let map = $state<Map>();
 	let center = $derived(data.center);
 	let tagInput = $state('');
@@ -269,6 +271,7 @@
 		}
 
 		editingPOI = null;
+		newUploadId = crypto.randomUUID();
 		$formData.id = undefined;
 		$formData.name = '';
 		$formData.description = '';
@@ -988,7 +991,7 @@
 						>
 						<ImageUpload
 							currentImageUrl={$formData.image_url}
-							storagePath="{session.user.id}/{params.id}/pois/{editingPOI?.id ?? 'new'}"
+							storagePath="{session.user.id}/{params.id}/pois/{editingPOI?.id ?? newUploadId}"
 							{supabase}
 							onUploaded={(url) => {
 								$formData.image_url = url;

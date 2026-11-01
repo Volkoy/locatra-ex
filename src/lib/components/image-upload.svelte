@@ -40,7 +40,6 @@
 
 	let fileInput: HTMLInputElement;
 	let isUploading = $state(false);
-	let isRemoving = $state(false);
 	let showCropModal = $state(false);
 	let rawImageSrc = $state('');
 	let crop = $state({ x: 0, y: 0 });
@@ -170,27 +169,14 @@
 		rawImageSrc = '';
 	}
 
-	async function removeImage() {
-		isRemoving = true;
-		try {
-			const cleanUrl = (currentImageUrl ?? '').split('?')[0];
-			const marker = `/object/public/${bucket}/`;
-			const idx = cleanUrl.indexOf(marker);
-			if (idx !== -1) {
-				const path = cleanUrl.slice(idx + marker.length);
-				await supabase.storage.from(bucket).remove([path]);
-			}
-			if (localPreviewUrl) {
-				URL.revokeObjectURL(localPreviewUrl);
-				localPreviewUrl = null;
-			}
-			onRemoved();
-		} catch (err) {
-			console.error('Remove failed:', err);
-			alert('Failed to remove image');
-		} finally {
-			isRemoving = false;
+	// Only clears the field; the stored file is left in place so cancelling the form
+	// after removing doesn't leave the saved record pointing at a deleted file.
+	function removeImage() {
+		if (localPreviewUrl) {
+			URL.revokeObjectURL(localPreviewUrl);
+			localPreviewUrl = null;
 		}
+		onRemoved();
 	}
 </script>
 
@@ -214,7 +200,7 @@
 					? 'aspect-square rounded-lg'
 					: 'aspect-video rounded-lg'} w-full object-cover"
 		/>
-		{#if isUploading || isRemoving}
+		{#if isUploading}
 			<div class="absolute inset-0 flex items-center justify-center rounded-lg bg-black/50">
 				<LoaderCircle class="h-8 w-8 animate-spin text-white" />
 			</div>
@@ -225,7 +211,7 @@
 			size="icon"
 			class="absolute top-2 right-2"
 			onclick={removeImage}
-			disabled={isUploading || isRemoving}
+			disabled={isUploading}
 		>
 			<X class="h-4 w-4" />
 		</Button>
@@ -233,7 +219,7 @@
 			type="button"
 			class="absolute bottom-2 left-2 rounded bg-black/60 px-2 py-1 text-xs text-white transition hover:bg-black/80 disabled:opacity-50"
 			onclick={openFilePicker}
-			disabled={isUploading || isRemoving}
+			disabled={isUploading}
 		>
 			Replace
 		</button>

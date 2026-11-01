@@ -9,9 +9,9 @@ const groq = new Groq({ apiKey: GROQ_API_KEY });
 const journeyStepDescriptions: Record<string, string> = {
 	call_to_adventure:
 		'An event or challenge that disrupts the ordinary world and invites the hero to embark on a journey.',
-	crossing_threshold:
+	crossing_the_threshold:
 		'The hero commits to the adventure and enters the special world, leaving the familiar behind.',
-	meeting_mentor:
+	meeting_the_mentor:
 		'The hero encounters a wise figure who provides guidance, training, or magical gifts for the journey ahead.',
 	trials_and_growth:
 		'The hero faces challenges, makes friends, identifies foes, and grows through experiences while learning the rules of the special world.',

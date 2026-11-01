@@ -33,6 +33,8 @@
 	let characters = $derived<Character[]>(data.characters || []);
 	let isFormOpen = $state(false);
 	let editingCharacter = $state<Character | null>(null);
+	// Unique storage key for new characters so their avatars don't overwrite each other
+	let newUploadId = $state(crypto.randomUUID());
 	let previewImageSrc = $state<string | null>(null);
 
 	// Search and sort state
@@ -76,6 +78,7 @@
 
 	const openCreateForm = () => {
 		editingCharacter = null;
+		newUploadId = crypto.randomUUID();
 		$formData.id = undefined;
 		$formData.name = '';
 		$formData.summary = '';
@@ -313,7 +316,7 @@
 						<ImageUpload
 							aspectRatio={1}
 							currentImageUrl={$formData.image_url}
-							storagePath="{session.user.id}/{params.id}/characters/{editingCharacter?.id ?? 'new'}"
+							storagePath="{session.user.id}/{params.id}/characters/{editingCharacter?.id ?? newUploadId}"
 							{supabase}
 							onPreview={(url) => {
 								previewImageSrc = url;
